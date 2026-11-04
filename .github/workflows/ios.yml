@@ -53,10 +53,18 @@ jobs:
           brew install xcodegen
           xcodegen generate
       - name: Core tests (macOS)
+        # One run hung here for 40+ min; cap it so the job still reports.
+        timeout-minutes: 10
         run: swift test 2>&1 | tee core-tests-macos.log
       - name: Simulator build + smoke test
+        # Runs even if the macOS core tests failed (they also run on Linux);
+        # the job is still marked failed.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
         run: scripts/ios-sim-smoke.sh
       - name: Unsigned device IPA
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
         run: scripts/build-unsigned-ipa.sh
       - uses: actions/upload-artifact@v6
         if: always()
