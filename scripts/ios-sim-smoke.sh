@@ -61,15 +61,25 @@ trap 'kill $LOG_PID 2>/dev/null || true' EXIT
 
 echo "== Launch (cold)"
 xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID" -LocusDemoRun
-sleep 6
+# CI simulators can be slow to launch, so wait for log lines, not fixed sleeps.
+wait_for() { # pattern timeout-seconds
+  local t=0
+  until grep -q "$1" "$OUT/app.log"; do
+    sleep 2; t=$((t + 2))
+    [ "$t" -ge "$2" ] && { echo "timed out after ${2}s waiting for: $1"; return 1; }
+  done
+}
+wait_for "\[Locus\]\[Run\]\[info\] Driving to Demo End" 180 || true
+sleep 4
 xcrun simctl io "$DEVICE_ID" screenshot "$OUT/01-active-run.png"
-sleep 20
+sleep 15
 xcrun simctl io "$DEVICE_ID" screenshot "$OUT/02-driving.png"
 
 echo "== Restart mid-run (recovery path)"
 xcrun simctl terminate "$DEVICE_ID" "$BUNDLE_ID" || true
 sleep 3
 xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID" -LocusShowRuns
+wait_for "\[Locus\]\[Run\]\[warning\] Recovered" 120 || true
 sleep 6
 xcrun simctl io "$DEVICE_ID" screenshot "$OUT/03-dashboard-after-restart.png"
 # locus://runs is not exercised: iOS shows an "Open in Locus?" confirmation for
