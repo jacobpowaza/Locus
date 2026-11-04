@@ -102,7 +102,7 @@ final class ScheduledRunsController: ObservableObject {
 
     #if DEBUG
     /// Debug/test hook (launch argument `-LocusDemoRun`): creates and starts a
-    /// short run — set location, 10 s wait, ~1 km drive, 10 s wait — and opens
+    /// short run — set location, 10 s wait, ~1 km drive at 20 mph, 10 min wait — and opens
     /// the live dashboard. Used by scripts/ios-sim-smoke.sh.
     private func startDemoRun(near coordinate: CLLocationCoordinate2D?) {
         let origin = coordinate.map(GeoPoint.init) ?? GeoPoint(latitude: 37.3349, longitude: -122.0090)
@@ -113,9 +113,11 @@ final class ScheduledRunsController: ObservableObject {
             actions: [
                 RunAction(.setLocation(a)),
                 RunAction(.wait(seconds: 10)),
-                RunAction(.setSpeed(.constant(SpeedUnit.mph.toMetersPerSecond(45)))),
+                RunAction(.setSpeed(.constant(SpeedUnit.mph.toMetersPerSecond(20)))),
                 RunAction(.driveTo(b, speed: nil)),
-                RunAction(.wait(seconds: 10)),
+                // Long enough that the smoke test's restart always lands mid-run,
+                // even on slow CI simulators.
+                RunAction(.wait(seconds: 600)),
             ],
             tint: 1
         )
