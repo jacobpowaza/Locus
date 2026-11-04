@@ -32,6 +32,28 @@
 		EA7795A0D36F3F0AFA464944 /* SpoofSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6C3F15BC482A2CBF13B1EA6 /* SpoofSession.swift */; };
 		F42C461AA339262E17E26A10 /* SetupFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 429366C3732ACF4031A7006B /* SetupFlowView.swift */; };
 		F8A8DEF1249AB260C4FF901A /* SilentAudioKeepAlive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DF917A85B507FDDCF382E2F /* SilentAudioKeepAlive.swift */; };
+		A1738CEE3F1E6F37057A1051 /* DriveProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 810C8486629EF7ED63AB0271 /* DriveProfile.swift */; };
+		3070D586558D56CB3E3FC454 /* GeoMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496C33D2C1AD503D15B9BB43 /* GeoMath.swift */; };
+		627F947BD3A7C9B6C65D376A /* RunCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55D15F88A57F5646E87A6265 /* RunCompiler.swift */; };
+		B189D45D7D9E43EC3B743693 /* RunCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 551E3154A0DA1CAB587065FC /* RunCoordinator.swift */; };
+		EADCC35BE4439EB351731A43 /* RunExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DECD9F617B94A5B6BAAFDFF4 /* RunExecutor.swift */; };
+		24212C036047005E4D594062 /* RunModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F2F250B42E19CF884E04FF /* RunModel.swift */; };
+		F21ABCCFAC9110CA7B93F21B /* RunPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9496776EEBD5FAEA206DF0E6 /* RunPlan.swift */; };
+		320C1EFF784D0F0FB2400A31 /* RunScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */; };
+		73EEAB2AAA0E28D425385474 /* RunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */; };
+		24757E8B5D09F80B1C7D200A /* RunValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */; };
+		D331DD17C93393AC110EF4A5 /* Speed.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF6CC5DC0991265CC33894D /* Speed.swift */; };
+		C591B4552483C3A2149BFC0A /* ScheduledRunsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58DFF0CF151FABEBF23B5E7C /* ScheduledRunsBridge.swift */; };
+		F6D69E8D68265E340662946C /* ScheduledRunsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FF109A316DDA20958A1D39C /* ScheduledRunsController.swift */; };
+		64811D1838FA4DD26D6F347D /* ActionBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25556502592B1907FAC86BE5 /* ActionBlocks.swift */; };
+		565E3C8873F24EA1BF51C266 /* ActiveRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74E04A4EFF0A1776CDA9B250 /* ActiveRunView.swift */; };
+		B9ADBF76D844233EC41E5AC1 /* LocationPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBE934231C0A78A02CB9317 /* LocationPickerView.swift */; };
+		CEAFC87FD33FF7BFB9A0C111 /* RunEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785E902A5CFDA03612F45907 /* RunEditorView.swift */; };
+		4B08532B45DA3B9D6A7E5764 /* RunHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD2876943CD5D5CBBE381FC /* RunHistoryView.swift */; };
+		1411D63FA610BA604A2DFF27 /* RunTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1E023EA27DBA0AF7A575CF /* RunTimelineView.swift */; };
+		9CEA6A1059138FE9493BA199 /* RunsStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA590BEB1B2783ABB85593D9 /* RunsStyle.swift */; };
+		D83015AC285BCC4BB911CC75 /* ScheduledRunsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBAC6615A94D9B0C1979A75 /* ScheduledRunsView.swift */; };
+		2917C80724B50FB33BFA5FB4 /* SpeedPolicyEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF94D19C1AFCC5E02A3168B2 /* SpeedPolicyEditor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,6 +86,28 @@
 		F714A23C4C718E67E978565F /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
 		FE9BF680256F4FF39E4FECB0 /* idevice.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = idevice.h; sourceTree = "<group>"; };
 		FF1AF0F32E88B4227CA45694 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		810C8486629EF7ED63AB0271 /* DriveProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveProfile.swift; sourceTree = "<group>"; };
+		496C33D2C1AD503D15B9BB43 /* GeoMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoMath.swift; sourceTree = "<group>"; };
+		55D15F88A57F5646E87A6265 /* RunCompiler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCompiler.swift; sourceTree = "<group>"; };
+		551E3154A0DA1CAB587065FC /* RunCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCoordinator.swift; sourceTree = "<group>"; };
+		DECD9F617B94A5B6BAAFDFF4 /* RunExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunExecutor.swift; sourceTree = "<group>"; };
+		A1F2F250B42E19CF884E04FF /* RunModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunModel.swift; sourceTree = "<group>"; };
+		9496776EEBD5FAEA206DF0E6 /* RunPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunPlan.swift; sourceTree = "<group>"; };
+		B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunScheduler.swift; sourceTree = "<group>"; };
+		5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStore.swift; sourceTree = "<group>"; };
+		BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunValidator.swift; sourceTree = "<group>"; };
+		CFF6CC5DC0991265CC33894D /* Speed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Speed.swift; sourceTree = "<group>"; };
+		58DFF0CF151FABEBF23B5E7C /* ScheduledRunsBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunsBridge.swift; sourceTree = "<group>"; };
+		5FF109A316DDA20958A1D39C /* ScheduledRunsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunsController.swift; sourceTree = "<group>"; };
+		25556502592B1907FAC86BE5 /* ActionBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionBlocks.swift; sourceTree = "<group>"; };
+		74E04A4EFF0A1776CDA9B250 /* ActiveRunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRunView.swift; sourceTree = "<group>"; };
+		5CBE934231C0A78A02CB9317 /* LocationPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPickerView.swift; sourceTree = "<group>"; };
+		785E902A5CFDA03612F45907 /* RunEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunEditorView.swift; sourceTree = "<group>"; };
+		6DD2876943CD5D5CBBE381FC /* RunHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunHistoryView.swift; sourceTree = "<group>"; };
+		FB1E023EA27DBA0AF7A575CF /* RunTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunTimelineView.swift; sourceTree = "<group>"; };
+		CA590BEB1B2783ABB85593D9 /* RunsStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsStyle.swift; sourceTree = "<group>"; };
+		1BBAC6615A94D9B0C1979A75 /* ScheduledRunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunsView.swift; sourceTree = "<group>"; };
+		BF94D19C1AFCC5E02A3168B2 /* SpeedPolicyEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedPolicyEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -126,6 +170,7 @@
 				36D52643D1CA99DF029BE655 /* Joystick */,
 				2C7F6D726AC574C9600B5F9A /* Map */,
 				B8E755C6C753821B2A8E141A /* Routes */,
+				DDEF65227E44B8A417287BE0 /* ScheduledRuns */,
 				04819CB404D166B850594890 /* Settings */,
 				8A34AD0FBFBBBC1E8E32A474 /* Setup */,
 			);
@@ -200,6 +245,7 @@
 				B32582618AEAB100F3C055BD /* Engine */,
 				39D1E1A92FC48FF828B78A3E /* Features */,
 				FA27A5BC6D7A370C663C36F1 /* Resources */,
+				E84B8D28D6568ED3D67B446C /* Scheduling */,
 				B67E43CBD395C80F3D3345CB /* Support */,
 			);
 			path = Locus;
@@ -212,6 +258,50 @@
 				3B51D4F370EFC220A54A082F /* Locus.entitlements */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		273D672EBC9305A3BA639335 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				810C8486629EF7ED63AB0271 /* DriveProfile.swift */,
+				496C33D2C1AD503D15B9BB43 /* GeoMath.swift */,
+				55D15F88A57F5646E87A6265 /* RunCompiler.swift */,
+				551E3154A0DA1CAB587065FC /* RunCoordinator.swift */,
+				DECD9F617B94A5B6BAAFDFF4 /* RunExecutor.swift */,
+				A1F2F250B42E19CF884E04FF /* RunModel.swift */,
+				9496776EEBD5FAEA206DF0E6 /* RunPlan.swift */,
+				B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */,
+				5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */,
+				BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */,
+				CFF6CC5DC0991265CC33894D /* Speed.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		E84B8D28D6568ED3D67B446C /* Scheduling */ = {
+			isa = PBXGroup;
+			children = (
+				273D672EBC9305A3BA639335 /* Core */,
+				58DFF0CF151FABEBF23B5E7C /* ScheduledRunsBridge.swift */,
+				5FF109A316DDA20958A1D39C /* ScheduledRunsController.swift */,
+			);
+			path = Scheduling;
+			sourceTree = "<group>";
+		};
+		DDEF65227E44B8A417287BE0 /* ScheduledRuns */ = {
+			isa = PBXGroup;
+			children = (
+				25556502592B1907FAC86BE5 /* ActionBlocks.swift */,
+				74E04A4EFF0A1776CDA9B250 /* ActiveRunView.swift */,
+				5CBE934231C0A78A02CB9317 /* LocationPickerView.swift */,
+				785E902A5CFDA03612F45907 /* RunEditorView.swift */,
+				6DD2876943CD5D5CBBE381FC /* RunHistoryView.swift */,
+				FB1E023EA27DBA0AF7A575CF /* RunTimelineView.swift */,
+				CA590BEB1B2783ABB85593D9 /* RunsStyle.swift */,
+				1BBAC6615A94D9B0C1979A75 /* ScheduledRunsView.swift */,
+				BF94D19C1AFCC5E02A3168B2 /* SpeedPolicyEditor.swift */,
+			);
+			path = ScheduledRuns;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -286,6 +376,28 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1738CEE3F1E6F37057A1051 /* DriveProfile.swift in Sources */,
+				3070D586558D56CB3E3FC454 /* GeoMath.swift in Sources */,
+				627F947BD3A7C9B6C65D376A /* RunCompiler.swift in Sources */,
+				B189D45D7D9E43EC3B743693 /* RunCoordinator.swift in Sources */,
+				EADCC35BE4439EB351731A43 /* RunExecutor.swift in Sources */,
+				24212C036047005E4D594062 /* RunModel.swift in Sources */,
+				F21ABCCFAC9110CA7B93F21B /* RunPlan.swift in Sources */,
+				320C1EFF784D0F0FB2400A31 /* RunScheduler.swift in Sources */,
+				73EEAB2AAA0E28D425385474 /* RunStore.swift in Sources */,
+				24757E8B5D09F80B1C7D200A /* RunValidator.swift in Sources */,
+				D331DD17C93393AC110EF4A5 /* Speed.swift in Sources */,
+				C591B4552483C3A2149BFC0A /* ScheduledRunsBridge.swift in Sources */,
+				F6D69E8D68265E340662946C /* ScheduledRunsController.swift in Sources */,
+				64811D1838FA4DD26D6F347D /* ActionBlocks.swift in Sources */,
+				565E3C8873F24EA1BF51C266 /* ActiveRunView.swift in Sources */,
+				B9ADBF76D844233EC41E5AC1 /* LocationPickerView.swift in Sources */,
+				CEAFC87FD33FF7BFB9A0C111 /* RunEditorView.swift in Sources */,
+				4B08532B45DA3B9D6A7E5764 /* RunHistoryView.swift in Sources */,
+				1411D63FA610BA604A2DFF27 /* RunTimelineView.swift in Sources */,
+				9CEA6A1059138FE9493BA199 /* RunsStyle.swift in Sources */,
+				D83015AC285BCC4BB911CC75 /* ScheduledRunsView.swift in Sources */,
+				2917C80724B50FB33BFA5FB4 /* SpeedPolicyEditor.swift in Sources */,
 				C5B176B29163E524B776757A /* BackgroundKeepAlive.swift in Sources */,
 				4A19A245C3B57EB4E5B02CDE /* DeviceTunnel.swift in Sources */,
 				AB35A419877FF9CA0B4AB114 /* JoystickPad.swift in Sources */,
@@ -394,7 +506,6 @@
 				MARKETING_VERSION = 1.0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-lidevice_ffi",
 					"-lc++",
 					"-lz",
 				);
@@ -500,7 +611,6 @@
 				MARKETING_VERSION = 1.0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
-					"-lidevice_ffi",
 					"-lc++",
 					"-lz",
 				);

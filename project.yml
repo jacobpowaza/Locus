@@ -45,9 +45,10 @@ targets:
         LIBRARY_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/idevice"
+        # libidevice_ffi.a is device-only (arm64 iphoneos). Simulator builds
+        # skip it and use the stub in LocationEngine.swift (see docs/TESTING.md).
         OTHER_LDFLAGS:
           - "$(inherited)"
-          - "-lidevice_ffi"
           - "-lc++"
           - "-lz"
         OTHER_LDFLAGS[sdk=iphoneos*]:

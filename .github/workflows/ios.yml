@@ -1,0 +1,60 @@
+name: iOS
+
+# Builds and tests Locus without a local Mac:
+#   core-linux  – Scheduled Runs engine unit + integration tests (Swift on Linux)
+#   ios         – same tests on macOS, iOS Simulator build + launch smoke test
+#                 (screenshots, device log, crash reports), unsigned device IPA
+# Artifacts: outputs/ (logs, screenshots, xcresult, Locus-unsigned.ipa).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core tests
+        run: swift test --parallel 2>&1 | tee core-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-tests-linux
+          path: core-tests.log
+
+  ios:
+    # The app uses iOS 26 APIs (Liquid Glass) behind availability checks, so
+    # it needs the iOS 26+ SDK (Xcode 26).
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Core tests (macOS)
+        run: swift test 2>&1 | tee core-tests-macos.log
+      - name: Simulator build + smoke test
+        run: scripts/ios-sim-smoke.sh
+      - name: Unsigned device IPA
+        run: scripts/build-unsigned-ipa.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-outputs
+          path: |
+            outputs/
+            core-tests-macos.log

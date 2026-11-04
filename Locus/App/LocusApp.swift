@@ -4,6 +4,8 @@ import SwiftUI
 struct LocusApp: App {
     @StateObject private var session = SpoofSession()
     @StateObject private var pairing = PairingStore()
+    @StateObject private var scheduledRuns = ScheduledRunsController()
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(SetupGate.defaultsKey) private var setupComplete = false
 
     /// Map when setup finished, or when already paired outside this walkthrough.
@@ -25,6 +27,13 @@ struct LocusApp: App {
             }
             .environmentObject(session)
             .environmentObject(pairing)
+            .environmentObject(scheduledRuns)
+            .task {
+                scheduledRuns.attach(session: session, pairing: pairing)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { scheduledRuns.sceneBecameActive() }
+            }
             .preferredColorScheme(.dark)
             .onOpenURL { url in
                 handleIncoming(url)
@@ -44,10 +53,15 @@ struct LocusApp: App {
             try? pairing.importPairing(from: url)
         } else if ext == "gpx" {
             NotificationCenter.default.post(name: .locusImportGPX, object: url)
+        } else if url.scheme == "locus", url.host == "runs" {
+            // locus://runs opens the Scheduled Runs dashboard.
+            NotificationCenter.default.post(name: .locusOpenScheduledRuns, object: nil)
         }
     }
 }
 
 extension Notification.Name {
     static let locusImportGPX = Notification.Name("locusImportGPX")
+    static let locusOpenScheduledRuns = Notification.Name("locusOpenScheduledRuns")
+    static let locusOpenActiveRun = Notification.Name("locusOpenActiveRun")
 }

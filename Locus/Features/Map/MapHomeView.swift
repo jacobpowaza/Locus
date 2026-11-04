@@ -4,6 +4,18 @@ import SwiftUI
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
+    @EnvironmentObject private var scheduledRuns: ScheduledRunsController
+    @State private var showActiveRun = false
+    @State private var showScheduledRuns = false
+
+    /// Drive legs of the active Scheduled Run, drawn under the spoof marker.
+    private var activeRunLegs: [[CLLocationCoordinate2D]] {
+        guard let plan = scheduledRuns.activePlan else { return [] }
+        return plan.segments.compactMap { seg in
+            if case .drive(let leg) = seg.kind { return leg.profile.polyline.points.map(\.coordinate) }
+            return nil
+        }
+    }
 
     @StateObject private var search = PlaceSearchCompleter()
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
@@ -98,6 +110,10 @@ struct MapHomeView: View {
                         MapPolyline(coordinates: routeCoords)
                             .stroke(LocusTheme.accent, lineWidth: 5)
                     }
+                    ForEach(Array(activeRunLegs.enumerated()), id: \.offset) { _, leg in
+                        MapPolyline(coordinates: leg)
+                            .stroke(LocusTheme.accentSecondary.opacity(0.8), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 6]))
+                    }
                     if drawnPath.count > 1 {
                         MapPolyline(coordinates: drawnPath)
                             .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
@@ -122,6 +138,12 @@ struct MapHomeView: View {
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil { pinSelected = false }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .locusOpenScheduledRuns)) { _ in
+            showScheduledRuns = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .locusOpenActiveRun)) { _ in
+            showActiveRun = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
             guard let url = note.object as? URL else { return }
             importGPX(url)
@@ -131,6 +153,13 @@ struct MapHomeView: View {
                 importGPX(url)
             }
         }
+        .sheet(isPresented: $showActiveRun) {
+            ActiveRunView()
+        }
+        .sheet(isPresented: $showScheduledRuns) {
+            ScheduledRunsView()
+        }
+        .animation(.snappy, value: scheduledRuns.isActive)
         .sheet(isPresented: $showRouteSheet) {
             RoutePlannerSheet(
                 start: $routeStart,
@@ -164,6 +193,8 @@ struct MapHomeView: View {
     private var topChrome: some View {
         VStack(spacing: 10) {
             StatusBarView()
+
+            ActiveRunBanner { showActiveRun = true }
 
             searchBar
 
@@ -255,6 +286,10 @@ struct MapHomeView: View {
             chromeIconButton("point.topleft.down.to.point.bottomright.curvepath") {
                 showRouteSheet = true
             }
+            chromeIconButton("calendar.badge.clock") {
+                showScheduledRuns = true
+            }
+            .accessibilityLabel("Scheduled Runs")
             chromeIconButton(drawMode ? "pencil.tip.crop.circle.badge.minus" : "pencil.tip.crop.circle") {
                 drawMode.toggle()
                 if !drawMode { drawnPath.removeAll() }

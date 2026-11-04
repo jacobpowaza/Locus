@@ -15,6 +15,7 @@ Free and open-source iPhone location teleport. Tap the map, search a place, or d
 - Live joystick — walk / run / cycle / drive with light speed variation
 - Walk/Drive routing on real roads & footpaths (MapKit)
 - Draw a path or import / export GPX
+- **Scheduled Runs** — build location routines from blocks (Set Location, Drive To, Wait, Start At, Set Speed, Stop, Repeat), speed modes with smooth acceleration and slower turns, and one-time or weekly schedules. Runs while Locus is alive; see [docs/SCHEDULED_RUNS.md](docs/SCHEDULED_RUNS.md) for iOS background limits
 - Background keep-alive + live status bar + drop alerts
 - Favorites & recents
 - First-run setup walkthrough
@@ -76,6 +77,10 @@ xcodegen generate
 xcodebuild -project Locus.xcodeproj -scheme Locus -configuration Release \
   -destination 'generic/platform=iOS' DEVELOPMENT_TEAM=YOUR_TEAM_ID build
 ```
+
+## Tests
+
+The Scheduled Runs engine is plain Swift and is tested on Linux or macOS with `scripts/test-core.sh`. The app build, the Simulator smoke test and the unsigned IPA run on macOS CI (`.github/workflows/ios.yml`). See [docs/TESTING.md](docs/TESTING.md).
 
 ## License
 

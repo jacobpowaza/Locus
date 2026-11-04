@@ -90,6 +90,10 @@ final class SpoofSession: ObservableObject {
     private var joystickVector: CGVector = .zero
     private let locationKeeper = BackgroundKeepAlive()
 
+    /// Called when the user moves/stops the location by hand, so an active
+    /// Scheduled Run can pause instead of fighting the user.
+    var onManualControl: (@MainActor (String) -> Void)?
+
     private let favoritesKey = "locus.favorites"
     private let recentsKey = "locus.recents"
 
@@ -109,11 +113,18 @@ final class SpoofSession: ObservableObject {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
+        onManualControl?("teleport")
         pin = coordinate
         apply(coordinate, pairing: pairing, markRecent: true)
     }
 
     func stop(pairing: PairingStore) {
+        onManualControl?("stop")
+        performStop()
+    }
+
+    @discardableResult
+    private func performStop() -> Bool {
         routeTask?.cancel()
         routeTask = nil
         stopJoystick()
@@ -130,11 +141,35 @@ final class SpoofSession: ObservableObject {
             // Keep location updates running so the map puck / locate button
             // can return to the real GPS fix (not the leftover pin).
             locationKeeper.start()
+            return true
         case .failure(let error):
             lastError = error.localizedDescription
             status = .dropped(error.localizedDescription)
             postDropNotification(error.localizedDescription)
+            return false
         }
+    }
+
+    // MARK: - Scheduled Runs automation
+
+    /// Moves the simulated location for a Scheduled Run. Unlike `teleport`,
+    /// this doesn't count as manual control or touch recents.
+    func automationSet(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore) -> Bool {
+        #if !targetEnvironment(simulator)
+        guard pairing.hasPairingFile else { return false }
+        #endif
+        if joystickActive { stopJoystick() }
+        if routeTask != nil {
+            routeTask?.cancel()
+            routeTask = nil
+        }
+        return apply(coordinate, pairing: pairing, markRecent: false, surfaceErrors: false)
+    }
+
+    /// Ends simulation for a Scheduled Run's Stop Spoofing step.
+    func automationStop(pairing: PairingStore) -> Bool {
+        guard simulated != nil || isSpoofing else { return true }
+        return performStop()
     }
 
     /// Best-known real device coordinate (not the teleport pin).
@@ -152,6 +187,7 @@ final class SpoofSession: ObservableObject {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
+        onManualControl?("joystick")
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
             lastError = "Drop a pin or teleport somewhere before using the joystick."
@@ -182,6 +218,7 @@ final class SpoofSession: ObservableObject {
 
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
         guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
+        onManualControl?("route")
         routeTask?.cancel()
         stopJoystick()
         let mode = travelMode
@@ -287,7 +324,13 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
-    private func apply(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore, markRecent: Bool) {
+    @discardableResult
+    private func apply(
+        _ coordinate: CLLocationCoordinate2D,
+        pairing: PairingStore,
+        markRecent: Bool,
+        surfaceErrors: Bool = true
+    ) -> Bool {
         if status == .idle || status.isDropped {
             status = .connecting
         }
@@ -312,14 +355,18 @@ final class SpoofSession: ObservableObject {
             if markRecent {
                 pushRecent(coordinate)
             }
+            return true
         case .failure(let error):
-            lastError = error.localizedDescription
+            // Scheduled runs report failures in their own log/UI instead of
+            // an alert on every retry.
+            if surfaceErrors { lastError = error.localizedDescription }
             if simulated != nil {
+                if !status.isDropped { postDropNotification(error.localizedDescription) }
                 status = .dropped(error.localizedDescription)
-                postDropNotification(error.localizedDescription)
             } else {
                 status = .idle
             }
+            return false
         }
     }
 

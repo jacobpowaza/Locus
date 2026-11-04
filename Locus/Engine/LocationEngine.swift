@@ -1,5 +1,7 @@
 import Foundation
+#if !targetEnvironment(simulator)
 import idevice
+#endif
 
 enum LocationEngineError: LocalizedError {
     case invalidIP
@@ -38,6 +40,7 @@ enum LocationEngineError: LocalizedError {
     }
 }
 
+#if !targetEnvironment(simulator)
 /// Thin Swift wrapper around idevice’s DVT location simulation (injects into locationd).
 enum LocationEngine {
     private static let queue = DispatchQueue(label: "com.chrismack.locus.location", qos: .userInitiated)
@@ -172,3 +175,29 @@ enum LocationEngine {
         return ok
     }
 }
+#else
+/// iOS Simulator stand-in. `libidevice_ffi.a` is built for iOS devices only
+/// and there is no developer tunnel in the Simulator, so this just records
+/// coordinates and logs them (grep the device log for "[Locus][SimStub]").
+/// It lets the UI, Scheduled Runs and everything except real spoofing be
+/// exercised in the Simulator. Use `xcrun simctl location` to move the
+/// Simulator's own location if needed.
+enum LocationEngine {
+    private static var active: (Double, Double)?
+
+    static var isSessionActive: Bool { active != nil }
+
+    static func set(latitude: Double, longitude: Double, pairingPath: String, deviceIP: String) -> Result<Void, LocationEngineError> {
+        active = (latitude, longitude)
+        NSLog("[Locus][SimStub] set %.6f,%.6f", latitude, longitude)
+        return .success(())
+    }
+
+    static func clear() -> Result<Void, LocationEngineError> {
+        guard active != nil else { return .failure(.locationClear) }
+        active = nil
+        NSLog("[Locus][SimStub] clear")
+        return .success(())
+    }
+}
+#endif

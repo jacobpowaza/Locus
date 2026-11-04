@@ -8,3 +8,6 @@ Vendor/idevice-build/
 outputs/
 *.ipa
 Payload/
+.build/
+.swiftpm/
+Package.resolved
