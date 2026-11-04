@@ -102,8 +102,10 @@ final class RunExecutor {
 
     /// Pause the run if the sink keeps failing this long.
     var sinkFailureGrace: Double = 30
-    /// Log a catch-up message when a single tick jumps more than this.
-    var catchUpLogThreshold: Double = 10
+    /// Log a catch-up message when a single tick jumps more than this. Must
+    /// exceed the longest planned tick (15 s during waits, see nextWakeDelay)
+    /// so ordinary ticks aren't reported as suspensions.
+    var catchUpLogThreshold: Double = 20
     /// Mirrors every log line (the app forwards these to the system log).
     var logObserver: ((ExecutionLogEntry) -> Void)?
 

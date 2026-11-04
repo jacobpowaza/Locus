@@ -167,6 +167,15 @@ final class ExecutorTests: XCTestCase {
         XCTAssertNear(ex.state.elapsedInSegment, 110, 0.01)
     }
 
+    func testNormalWaitTicksAreNotReportedAsSuspension() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 600)])
+        let ex = start(run, plan)
+        // During waits the app ticks at most every 15 s (nextWakeDelay).
+        XCTAssertLessThanOrEqual(ex.nextWakeDelay(wallNow: clock.now), 15)
+        tick(ex, seconds: 60, step: 15.5)
+        XCTAssertFalse(ex.state.log.contains { $0.message.contains("Caught up") })
+    }
+
     func testSinkFailurePausesAfterGraceAndRecovers() async throws {
         let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: nil)])
         let ex = start(run, plan)
