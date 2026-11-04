@@ -288,7 +288,11 @@ struct DurationEditor: View {
     private var s: Int { Int(seconds) % 60 }
 
     private func set(h: Int? = nil, m: Int? = nil, s: Int? = nil) {
-        seconds = Double((h ?? self.h) * 3600 + (m ?? self.m) * 60 + (s ?? self.s))
+        let hours: Int = h ?? self.h
+        let minutes: Int = m ?? self.m
+        let secs: Int = s ?? self.s
+        let total: Int = hours * 3600 + minutes * 60 + secs
+        seconds = Double(total)
     }
 
     var body: some View {
