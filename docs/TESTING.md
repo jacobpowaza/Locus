@@ -67,7 +67,7 @@ Locally on a Mac you can run the same scripts directly.
 
 ### Try it in a browser (Appetize.io, works from Linux)
 
-Each CI run uploads a **`Locus-simulator`** artifact. It contains
+Each CI run uploads a **`Locus-simulator-<runner>`** artifact (one per macOS runner that got a machine). It contains
 `Locus-simulator.zip`, a universal (arm64 + x86_64) Debug Simulator build.
 
 1. Download the artifact from the run's page on GitHub and unzip it once.
