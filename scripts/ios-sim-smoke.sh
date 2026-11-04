@@ -33,12 +33,17 @@ echo "== Build"
 xcodebuild -project Locus.xcodeproj -scheme Locus -configuration Debug \
   -sdk iphonesimulator -destination "id=$DEVICE_ID" \
   -derivedDataPath "$DERIVED" -resultBundlePath "$OUT/build.xcresult" \
-  CODE_SIGNING_ALLOWED=NO build > "$OUT/xcodebuild.log" 2>&1 \
+  ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build > "$OUT/xcodebuild.log" 2>&1 \
   || { tail -80 "$OUT/xcodebuild.log"; exit 1; }
 grep -E "warning: |error: " "$OUT/xcodebuild.log" | sort -u > "$OUT/diagnostics.txt" || true
 echo "$(grep -c 'warning: ' "$OUT/diagnostics.txt" || true) unique compiler warnings (see diagnostics.txt)"
 
 APP="$DERIVED/Build/Products/Debug-iphonesimulator/Locus.app"
+# Universal (arm64 + x86_64) Simulator build, zipped for Appetize.io or
+# `xcrun simctl install` on any Mac.
+lipo -info "$APP/Locus" || true
+ditto -c -k --sequesterRsrc --keepParent "$APP" outputs/Locus-simulator.zip
+echo "Simulator app: outputs/Locus-simulator.zip"
 xcrun simctl boot "$DEVICE_ID" 2>/dev/null || true
 xcrun simctl bootstatus "$DEVICE_ID" -b
 xcrun simctl install "$DEVICE_ID" "$APP"

@@ -65,6 +65,23 @@ coordinates.
 To use it: fork `ChrisMack32/Locus`, push, and open the **Actions** tab.
 Locally on a Mac you can run the same scripts directly.
 
+### Try it in a browser (Appetize.io, works from Linux)
+
+Each CI run uploads a **`Locus-simulator`** artifact. It contains
+`Locus-simulator.zip`, a universal (arm64 + x86_64) Debug Simulator build.
+
+1. Download the artifact from the run's page on GitHub and unzip it once.
+   You should end up with `Locus-simulator.zip`.
+2. Sign in at [appetize.io](https://appetize.io), choose **Upload**, pick
+   **iOS**, and upload `Locus-simulator.zip`.
+3. Open the app in the browser. Simulator builds skip the pairing walkthrough
+   (pass the launch argument `-LocusShowSetup` to see it), so you go straight
+   to the map. Optionally add the launch argument `-LocusDemoRun` in
+   Appetize's settings to start a demo run straight away.
+
+Spoofing goes through the Simulator stub here too. You can use every screen
+and run a schedule end to end, but nothing changes the device location.
+
 ## 3. Physical iPhone (the only real end-to-end test)
 
 From Linux, without Xcode:

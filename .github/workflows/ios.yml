@@ -54,6 +54,12 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
+          name: Locus-simulator
+          path: outputs/Locus-simulator.zip
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
           name: ios-outputs
           path: |
             outputs/

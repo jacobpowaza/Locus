@@ -10,7 +10,12 @@ struct LocusApp: App {
 
     /// Map when setup finished, or when already paired outside this walkthrough.
     private var showMap: Bool {
-        setupComplete || (pairing.hasPairingFile && !SetupGate.isInProgress)
+        #if targetEnvironment(simulator)
+        // No pairing file or VPN exists in the Simulator (or Appetize), so the
+        // walkthrough can't be finished there. Pass -LocusShowSetup to see it.
+        if !ProcessInfo.processInfo.arguments.contains("-LocusShowSetup") { return true }
+        #endif
+        return setupComplete || (pairing.hasPairingFile && !SetupGate.isInProgress)
     }
 
     var body: some Scene {
