@@ -40,25 +40,25 @@ enum RunsStyle {
 
     static func title(_ c: RunActionKind.Category) -> String {
         switch c {
-        case .setLocation: return "Set Location"
+        case .setLocation: return "Teleport"
         case .driveTo: return "Drive To"
         case .wait: return "Wait"
-        case .startAt: return "Start At"
-        case .setSpeed: return "Set Speed"
-        case .stopSpoofing: return "Stop Spoofing"
+        case .startAt: return "Wait Until"
+        case .setSpeed: return "Change Speed"
+        case .stopSpoofing: return "Turn Off Locus"
         case .repeatPrevious: return "Repeat"
         }
     }
 
     static func blurb(_ c: RunActionKind.Category) -> String {
         switch c {
-        case .setLocation: return "Jump to a place instantly"
-        case .driveTo: return "Drive there along real roads"
+        case .setLocation: return "Appear somewhere instantly"
+        case .driveTo: return "Drive there on real roads"
         case .wait: return "Stay put for a while"
-        case .startAt: return "Hold until a time of day"
-        case .setSpeed: return "Change how fast drives go"
-        case .stopSpoofing: return "Return to real GPS"
-        case .repeatPrevious: return "Loop earlier steps"
+        case .startAt: return "Stay put until a time of day"
+        case .setSpeed: return "Drive faster or slower from here on"
+        case .stopSpoofing: return "Go back to your real location"
+        case .repeatPrevious: return "Do earlier steps again"
         }
     }
 }
@@ -81,6 +81,16 @@ struct RunFormat {
             return unit == .mph ? "\(Int((meters * 3.28084 / 10).rounded()) * 10) ft" : "\(Int(meters.rounded())) m"
         }
         return String(format: v < 10 ? "%.1f %@" : "%.0f %@", v, unit.distanceLabel)
+    }
+
+    /// Travel-time style: "8 min", "1 hr 20 min".
+    static func eta(_ seconds: Double) -> String {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .short
+        f.allowedUnits = seconds >= 3600 ? [.hour, .minute] : [.minute]
+        f.maximumUnitCount = 2
+        let rounded = max(60, (seconds / 60).rounded() * 60)
+        return f.string(from: rounded) ?? DurationText.short(seconds)
     }
 
     static func duration(_ seconds: Double) -> String {

@@ -11,11 +11,12 @@ Free and open-source iPhone location teleport. Tap the map, search a place, or d
 
 ## Features
 
-- One-tap teleport (map pin or place search)
+- Apple Maps–style search: find a place, then **Teleport**, **Drive** or **Walk** there
+- Realistic drives: at, above or below the speed limit (or a fixed speed), optional red lights (random wait up to a limit you choose), stop signs at turns, and natural speed variation
+- One-tap **Turn Off** to return to your real location
 - Live joystick — walk / run / cycle / drive with light speed variation
-- Walk/Drive routing on real roads & footpaths (MapKit)
-- Draw a path or import / export GPX
-- **Scheduled Runs** — build location routines from blocks (Set Location, Drive To, Wait, Start At, Set Speed, Stop, Repeat), speed modes with smooth acceleration and slower turns, and one-time or weekly schedules. Runs while Locus is alive; see [docs/SCHEDULED_RUNS.md](docs/SCHEDULED_RUNS.md) for iOS background limits
+- Open a GPX file in Locus to walk or drive along it
+- **Scheduled Runs** — build location routines from steps (Teleport, Drive To, Wait, Wait Until, Change Speed, Turn Off Locus, Repeat), speed modes with smooth acceleration and slower turns, and one-time or weekly schedules. Runs while Locus is alive; see [docs/SCHEDULED_RUNS.md](docs/SCHEDULED_RUNS.md) for iOS background limits
 - Background keep-alive + live status bar + drop alerts
 - Favorites & recents
 - First-run setup walkthrough

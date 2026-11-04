@@ -24,9 +24,9 @@ struct ActiveRunView: View {
                 finished
             }
         }
-        .confirmationDialog("End this run?", isPresented: $confirmCancel, titleVisibility: .visible) {
+        .confirmationDialog(runs.isOneOffActive ? "End this drive?" : "End this run?", isPresented: $confirmCancel, titleVisibility: .visible) {
             Button("End & Stay Here") { runs.cancel(stopSpoofing: false) }
-            Button("End & Stop Spoofing", role: .destructive) { runs.cancel(stopSpoofing: true) }
+            Button("End & Return to Real Location", role: .destructive) { runs.cancel(stopSpoofing: true) }
         } message: {
             Text("Staying keeps the simulated location where it is now.")
         }
@@ -42,7 +42,7 @@ struct ActiveRunView: View {
                 Label(runs.lastFinished?.outcome.label ?? "No active run", systemImage: "flag.checkered")
             } description: {
                 if let r = runs.lastFinished {
-                    Text(r.message ?? "\(r.runName) finished. Locus stays at the last simulated location until you stop spoofing.")
+                    Text(r.message ?? "\(r.runName) finished. You'll stay at the last simulated location until you tap Turn Off on the map.")
                 }
             }
             .toolbar {
@@ -185,7 +185,7 @@ struct ActiveRunView: View {
             .buttonStyle(.plain)
             .accessibilityHint("Shows every step")
 
-            if s.segmentCount > 0 {
+            if s.segmentCount > 0, !runs.isOneOffActive {
                 ProgressView(value: Double(min(s.segmentIndex, s.segmentCount)), total: Double(s.segmentCount))
                     .tint(LocusTheme.accent)
                     .accessibilityLabel("Step \(min(s.segmentIndex + 1, s.segmentCount)) of \(s.segmentCount)")
@@ -205,7 +205,7 @@ struct ActiveRunView: View {
                 }
                 Button { runs.skip() } label: { Image(systemName: "forward.end.fill") }
                     .buttonStyle(LocusRoundButtonStyle())
-                    .accessibilityLabel("Skip step")
+                    .accessibilityLabel(runs.isOneOffActive ? "Arrive now" : "Skip step")
                 Button {
                     speedDraft = s.speedPolicy
                     showSpeed = true
@@ -263,7 +263,7 @@ struct ActiveRunView: View {
             Form {
                 SpeedPolicyEditor(policy: $speedDraft, unit: runs.unit, referenceSource: runs.snapshot?.referenceSource)
                 Section {
-                    Text("Applies to the current drive and later drives until the next Set Speed step. Drives with their own custom speed keep it.")
+                    Text("Applies to this drive and the ones after it.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -322,7 +322,9 @@ struct ActiveRunView: View {
     }
 
     private func stepLine(_ s: ExecutionSnapshot) -> String {
+        if let stop = ActiveRunBanner.stopText(s.stoppedFor) { return stop }
         guard let seg = s.segment else { return "" }
+        if runs.isOneOffActive { return seg.summary }
         return "Step \(s.segmentIndex + 1) of \(s.segmentCount) · \(seg.summary)"
     }
 
@@ -333,7 +335,11 @@ struct ActiveRunView: View {
         if s.connectionProblem {
             return ("Can't reach the spoofing tunnel — retrying. Check LocalDevVPN.", "wifi.exclamationmark", LocusTheme.statusBad)
         }
-        return nil
+        switch s.stoppedFor {
+        case .redLight?: return ("Waiting at a red light", "light.beacon.max.fill", LocusTheme.danger)
+        case .stopSign?: return ("Stopping at a stop sign", "octagon.fill", LocusTheme.danger)
+        case nil: return nil
+        }
     }
 
     private func speedAccessibility(_ s: ExecutionSnapshot, fmt: RunFormat, estimated: Bool) -> String {
@@ -361,7 +367,7 @@ struct ActiveRunBanner: View {
                             .foregroundStyle(s?.status == .paused ? LocusTheme.statusWarn : LocusTheme.accent)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                            Text(s?.segment?.summary ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(Self.subtitle(s)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 6)
                         if let s, s.speed > 0.3 {
@@ -377,7 +383,20 @@ struct ActiveRunBanner: View {
             }
             .buttonStyle(.plain)
             .transition(.move(edge: .top).combined(with: .opacity))
-            .accessibilityLabel("Scheduled run \(name) in progress. Open run dashboard.")
+            .accessibilityLabel("\(name) in progress. Open dashboard.")
+        }
+    }
+
+    static func subtitle(_ s: ExecutionSnapshot?) -> String {
+        guard let s else { return "" }
+        return stopText(s.stoppedFor) ?? s.segment?.summary ?? ""
+    }
+
+    static func stopText(_ kind: DriveStop.Kind?) -> String? {
+        switch kind {
+        case .redLight?: return "Waiting at a red light"
+        case .stopSign?: return "Stopping at a stop sign"
+        case nil: return nil
         }
     }
 }

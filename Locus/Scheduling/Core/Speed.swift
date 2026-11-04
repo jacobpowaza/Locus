@@ -63,10 +63,10 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
             "\(Int(unit.fromMetersPerSecond(mps).rounded())) \(unit.label)"
         }
         switch self {
-        case .followLimit: return "Follow speed limit"
-        case .constant(let v): return "Constant \(fmt(v))"
-        case .aboveLimit(let o): return "\(fmt(o)) above limit"
-        case .belowLimit(let o): return "\(fmt(o)) below limit"
+        case .followLimit: return "At the speed limit"
+        case .constant(let v): return "Steady \(fmt(v))"
+        case .aboveLimit(let o): return "\(fmt(o)) over the limit"
+        case .belowLimit(let o): return "\(fmt(o)) under the limit"
         }
     }
 
@@ -99,6 +99,9 @@ struct MotionSettings: Codable, Equatable, Hashable {
     var minimumCornerSpeed: Double = 3.0
     /// Slow for turns at all.
     var slowForTurns: Bool = true
+    /// Red lights, stop signs and speed drift. Optional so runs saved before
+    /// this existed still decode (nil = off).
+    var realism: DriveRealism? = nil
 
     static let standard = MotionSettings()
 }

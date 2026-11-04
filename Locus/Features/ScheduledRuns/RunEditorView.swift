@@ -58,7 +58,7 @@ struct RunEditorView: View {
                 headerSection
                 stepsSection
                 scheduleSection
-                speedSection
+                drivingSection
                 previewSection
             }
             .environment(\.editMode, $editMode)
@@ -139,33 +139,21 @@ struct RunEditorView: View {
     private var headerSection: some View {
         Section {
             HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(RunsStyle.tint(draft.tint).gradient)
-                    .frame(width: 40, height: 40)
-                    .overlay(Image(systemName: "calendar.badge.clock").foregroundStyle(.white).font(.headline))
-                TextField("Run name", text: $draft.name)
+                // Tap the icon to change the run's colour.
+                Button {
+                    withAnimation(.snappy) { draft.tint = (draft.tint + 1) % RunsStyle.tints.count }
+                } label: {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(RunsStyle.tint(draft.tint).gradient)
+                        .frame(width: 44, height: 44)
+                        .overlay(Image(systemName: "calendar.badge.clock").foregroundStyle(.white).font(.headline))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Change color")
+                TextField("Name this run", text: $draft.name)
                     .font(.title3.weight(.semibold))
                     .focused($nameFocused)
                     .submitLabel(.done)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(RunsStyle.tints.indices, id: \.self) { i in
-                        Button {
-                            draft.tint = i
-                        } label: {
-                            Circle()
-                                .fill(RunsStyle.tints[i])
-                                .frame(width: 28, height: 28)
-                                .overlay(Circle().stroke(.white, lineWidth: draft.tint == i ? 3 : 0))
-                                .padding(2)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Color \(i + 1)")
-                        .accessibilityAddTraits(draft.tint == i ? .isSelected : [])
-                    }
-                }
-                .padding(.vertical, 2)
             }
         }
     }
@@ -173,7 +161,7 @@ struct RunEditorView: View {
     private var stepsSection: some View {
         Section {
             if draft.actions.isEmpty {
-                Text("Add steps to build your run. They play top to bottom.")
+                Text("Add steps like Teleport, Wait and Drive To. They play from top to bottom.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -230,7 +218,7 @@ struct RunEditorView: View {
             Button {
                 showAddAction = true
             } label: {
-                Label("Add Action", systemImage: "plus.circle.fill")
+                Label("Add Step", systemImage: "plus.circle.fill")
                     .font(.headline)
                     .foregroundStyle(LocusTheme.accent)
             }
@@ -248,7 +236,9 @@ struct RunEditorView: View {
                 }
             }
         } footer: {
-            Text("Tap a step to edit it. Long-press for more, or swipe to delete or duplicate.")
+            if !draft.actions.isEmpty {
+                Text("Tap a step to change it. Swipe left to delete.")
+            }
         }
     }
 
@@ -256,34 +246,43 @@ struct RunEditorView: View {
         Section {
             ScheduleEditor(schedule: $draft.schedule, latePolicy: $draft.latePolicy, isEnabled: $draft.isEnabled)
         } header: {
-            Text("Schedule")
+            Text("When")
         } footer: {
             if draft.schedule.isAutomatic {
-                Text("Scheduled runs start on time while Locus is running. If iOS has closed Locus, you'll get a notification and the run starts late when you open the app (within the late-start window).")
+                Text("Keep Locus open in the background. If iPhone closed it, you'll get a notification to open it.")
             }
         }
     }
 
-    private var speedSection: some View {
+    private var realism: Binding<DriveRealism> {
+        Binding(
+            get: { draft.motion.realism ?? .off },
+            set: { draft.motion.realism = $0.isOff ? nil : $0 }
+        )
+    }
+
+    private var drivingSection: some View {
         Section {
             NavigationLink {
                 Form {
                     SpeedPolicyEditor(policy: $draft.defaultSpeed, unit: runs.unit, referenceSource: firstDriveReferenceSource)
                 }
-                .navigationTitle("Default Speed")
+                .navigationTitle("Speed")
             } label: {
-                LabeledContent("Default speed", value: draft.defaultSpeed.summary(unit: runs.unit))
+                LabeledContent("Speed", value: draft.defaultSpeed.summary(unit: runs.unit))
             }
-            Toggle("Smooth acceleration", isOn: $draft.motion.smoothing)
-            Toggle("Slow down for turns", isOn: $draft.motion.slowForTurns)
-            Picker("Units", selection: $runs.unit) {
-                ForEach(SpeedUnit.allCases) { u in Text(u.label).tag(u) }
+            Toggle("Stop at red lights", isOn: realism.redLights)
+            if realism.wrappedValue.redLights {
+                Picker("Longest wait", selection: realism.maxRedLightWait) {
+                    ForEach(DriveRealism.redLightChoices, id: \.self) { Text(RunFormat.duration($0)).tag($0) }
+                }
             }
-            .pickerStyle(.segmented)
+            Toggle("Stop at stop signs", isOn: realism.stopSigns)
+            Toggle("Vary speed naturally", isOn: realism.varySpeed)
         } header: {
-            Text("Speed")
+            Text("Driving")
         } footer: {
-            Text("Applies to drives until a Set Speed step changes it. A drive with its own custom speed ignores both. Drives always ease to a stop at the destination.")
+            Text("Used by every Drive To step. Lights and signs are added at turns and intersections along the route.")
         }
     }
 
@@ -323,25 +322,25 @@ struct RunEditorView: View {
                 Button {
                     showTimeline = true
                 } label: {
-                    Label("Timeline & Route Preview", systemImage: "list.bullet.below.rectangle")
+                    Label("See Timeline and Route", systemImage: "list.bullet.below.rectangle")
                 }
             } else if isPreviewing || preview == nil, !issues.hasErrors {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Calculating routes and timing…").foregroundStyle(.secondary)
+                    Text("Working out the timing…").foregroundStyle(.secondary)
                 }
                 .font(.subheadline)
             }
         } header: {
             HStack {
-                Text("Preview")
+                Text("Summary")
                 if isPreviewing && preview != nil {
                     ProgressView().controlSize(.mini)
                 }
             }
         } footer: {
             if let p = preview, p.plan != nil {
-                Text("Timed as if it starts \(RunFormat.dayAndTime(p.startDate, timeZone: draft.timeZone)). Driving times include acceleration, turns and stopping.")
+                Text("If it starts \(RunFormat.dayAndTime(p.startDate, timeZone: draft.timeZone)).")
             }
         }
     }
@@ -392,7 +391,7 @@ struct ScheduleEditor: View {
     @Binding var isEnabled: Bool
 
     private enum Mode: String, CaseIterable, Identifiable {
-        case manual = "Manual", once = "Once", repeating = "Repeat"
+        case manual = "Manually", once = "Once", repeating = "Repeat"
         var id: String { rawValue }
     }
 
@@ -420,13 +419,10 @@ struct ScheduleEditor: View {
 
         switch schedule {
         case .manual:
-            Text("Runs only when you tap Run.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            EmptyView()
         case .once(let date):
             DatePicker("Starts", selection: Binding(get: { date }, set: { schedule = .once($0) }), in: Date()...)
-            enabledToggle
-            latePicker
+            optionsLink(timeZone: nil)
         case .recurring(let time, let days, let tz):
             DatePicker(
                 "Time",
@@ -440,26 +436,43 @@ struct ScheduleEditor: View {
                 displayedComponents: .hourAndMinute
             )
             WeekdayPicker(days: Binding(get: { days }, set: { schedule = .recurring(time, weekdays: $0, timeZoneID: tz) }))
-            NavigationLink {
-                TimeZonePicker(identifier: Binding(get: { tz }, set: { schedule = .recurring(time, weekdays: days, timeZoneID: $0) }))
-            } label: {
-                LabeledContent("Time zone", value: tz.flatMap { TimeZone(identifier: $0)?.identifier } ?? "Device (\(TimeZone.current.identifier))")
-            }
-            enabledToggle
-            latePicker
+            optionsLink(timeZone: Binding(get: { tz }, set: { schedule = .recurring(time, weekdays: days, timeZoneID: $0) }))
         }
     }
 
-    private var enabledToggle: some View {
-        Toggle("Schedule on", isOn: $isEnabled)
-    }
-
-    private var latePicker: some View {
-        Picker("If Locus wasn't running", selection: $latePolicy.maxDelay) {
-            Text("Skip").tag(0.0)
-            Text("Start up to 5 min late").tag(300.0)
-            Text("Start up to 15 min late").tag(900.0)
-            Text("Start up to 1 h late").tag(3600.0)
+    /// Rarely needed settings, kept one tap away.
+    private func optionsLink(timeZone: Binding<String?>?) -> some View {
+        NavigationLink {
+            Form {
+                Section {
+                    Toggle("Schedule On", isOn: $isEnabled)
+                } footer: {
+                    Text("Turn off to keep the run but stop it starting by itself.")
+                }
+                Section {
+                    Picker("If Locus Was Closed", selection: $latePolicy.maxDelay) {
+                        Text("Skip It").tag(0.0)
+                        Text("Start up to 5 min late").tag(300.0)
+                        Text("Start up to 15 min late").tag(900.0)
+                        Text("Start up to 1 hr late").tag(3600.0)
+                    }
+                } footer: {
+                    Text("What to do if iPhone had closed Locus at the start time.")
+                }
+                if let timeZone {
+                    Section {
+                        NavigationLink {
+                            TimeZonePicker(identifier: timeZone)
+                        } label: {
+                            LabeledContent("Time Zone", value: timeZone.wrappedValue.flatMap { TimeZone(identifier: $0)?.identifier } ?? "This iPhone's")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Schedule Options")
+            .navigationBarTitleDisplayMode(.inline)
+        } label: {
+            LabeledContent("Options", value: isEnabled ? "" : "Schedule Off")
         }
     }
 

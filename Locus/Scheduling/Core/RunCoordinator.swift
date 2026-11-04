@@ -243,6 +243,17 @@ final class RunCoordinator {
         return await begin(run, trigger: .manual, occurrence: nil)
     }
 
+    /// Start a one-off run that isn't saved in the runs list (e.g. a drive
+    /// started from the map). It still shows in history.
+    @discardableResult
+    func startOneOff(_ run: ScheduledRun) async -> String? {
+        if let active = executor, !active.state.status.isFinished {
+            return "\"\(active.state.runName)\" is already running. End it first."
+        }
+        if startingRunID != nil { return "Another run is starting." }
+        return await begin(run, trigger: .manual, occurrence: nil)
+    }
+
     private func begin(_ run: ScheduledRun, trigger: RunTrigger, occurrence: Date?) async -> String? {
         startingRunID = run.id
         changed()
@@ -404,7 +415,7 @@ final class RunCoordinator {
 
     /// Wall clock / time zone changed (UIApplication.significantTimeChange).
     func handleClockChange() {
-        executor?.noteWarning("Device time or time zone changed; Start At times use the new clock.", wallNow: clock.now)
+        executor?.noteWarning("Device time or time zone changed; Wait Until times use the new clock.", wallNow: clock.now)
         refreshReminders()
         changed()
     }

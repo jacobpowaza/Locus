@@ -81,6 +81,8 @@ struct ExecutionSnapshot: Equatable {
     var distanceRemaining: Double
     var projected: [ProjectedSegment]
     var connectionProblem: Bool
+    /// Standing at a red light or stop sign right now.
+    var stoppedFor: DriveStop.Kind? = nil
 }
 
 /// Steps a compiled plan forward in time and pushes positions to a sink.
@@ -199,7 +201,7 @@ final class RunExecutor {
                 log(.info, "Speed: \(policy.summary(unit: .mph)).", wallNow.addingTimeInterval(-remaining))
                 enterNext()
             case .stop:
-                log(.info, "Stopped spoofing.", wallNow.addingTimeInterval(-remaining))
+                log(.info, "Turned off Locus.", wallNow.addingTimeInterval(-remaining))
                 enterNext()
             case .hold(let seconds):
                 let left = seconds - state.elapsedInSegment
@@ -218,7 +220,7 @@ final class RunExecutor {
                 if target <= entry {
                     let late = entry.timeIntervalSince(target)
                     if late > 60, state.elapsedInSegment == 0 {
-                        log(.warning, "Start At \(DurationText.clock(target, timeZone: tz)) began \(DurationText.short(late)) late.", entry)
+                        log(.warning, "Wait Until \(DurationText.clock(target, timeZone: tz)) began \(DurationText.short(late)) late.", entry)
                     }
                     enterNext()
                 } else if target <= wallNow {
@@ -307,7 +309,7 @@ final class RunExecutor {
             sinkFailingSince = nil
         } else if let since = sinkFailingSince {
             if wallNow.timeIntervalSince(since) >= sinkFailureGrace {
-                pause(reason: "Lost the spoofing connection. Check LocalDevVPN, then resume.", wallNow: wallNow)
+                pause(reason: "Lost the connection. Check LocalDevVPN, then resume.", wallNow: wallNow)
                 sinkFailingSince = nil
             }
         } else {
@@ -383,7 +385,7 @@ final class RunExecutor {
         state.status = .cancelled
         state.endedAt = wallNow
         state.pauseReason = nil
-        log(.info, stopSpoofing ? "Cancelled and stopped spoofing." : "Cancelled. Staying at the current simulated location.", wallNow)
+        log(.info, stopSpoofing ? "Ended and returned to the real location." : "Ended. Staying at the current simulated location.", wallNow)
         if stopSpoofing, let sink, sink.stopSimulation() { sent = .stopped }
     }
 
@@ -415,12 +417,7 @@ final class RunExecutor {
                         state.elapsedInSegment = 0
                     }
                 } else {
-                    leg.profile = DriveProfile(
-                        route: leg.profile.polyline,
-                        reference: leg.profile.reference,
-                        policy: policy,
-                        motion: leg.profile.motion
-                    )
+                    leg.profile = leg.profile.withPolicy(policy)
                 }
                 state.plan.segments[i].kind = .drive(leg)
             }
@@ -453,6 +450,7 @@ final class RunExecutor {
         var holdEnds: Date?
         var currentLegDriven = 0.0
         var currentLegLeft = 0.0
+        var stoppedFor: DriveStop.Kind?
 
         let projected = state.status.isFinished
             ? []
@@ -467,6 +465,7 @@ final class RunExecutor {
                 legRemaining = s.distanceRemaining
                 currentLegDriven = s.distanceTravelled
                 currentLegLeft = s.distanceRemaining
+                stoppedFor = s.stoppedFor
                 legArrival = projected.first?.end
             case .hold, .waitUntil:
                 holdEnds = projected.first?.end
@@ -501,7 +500,8 @@ final class RunExecutor {
             distanceDriven: state.distanceBanked + currentLegDriven,
             distanceRemaining: currentLegLeft + later,
             projected: projected,
-            connectionProblem: sinkFailingSince != nil
+            connectionProblem: sinkFailingSince != nil,
+            stoppedFor: state.status == .running ? stoppedFor : nil
         )
     }
 

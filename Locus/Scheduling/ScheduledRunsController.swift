@@ -20,12 +20,24 @@ final class ScheduledRunsController: ObservableObject {
     @Published private(set) var startingRunID: UUID?
     @Published private(set) var lastFinished: RunRecord?
     @Published var errorMessage: String?
+    /// The Scheduled Runs sheet is showing (it shows its own error alert).
+    @Published var isPresentingRunsUI = false
 
     /// MPH / km/h preference (defaults from the device region).
     @Published var unit: SpeedUnit {
         didSet { UserDefaults.standard.set(unit.rawValue, forKey: Self.unitKey) }
     }
     private static let unitKey = "locus.speedUnit"
+
+    /// Speed and traffic choices for drives started from the map.
+    @Published var drivePrefs: DrivePreferences {
+        didSet {
+            if let data = try? JSONEncoder().encode(drivePrefs) {
+                UserDefaults.standard.set(data, forKey: Self.drivePrefsKey)
+            }
+        }
+    }
+    private static let drivePrefsKey = "locus.drivePrefs"
 
     private let coordinator: RunCoordinator
     private let notifier = UserNotificationRunNotifier()
@@ -50,6 +62,8 @@ final class ScheduledRunsController: ObservableObject {
     init() {
         unit = UserDefaults.standard.string(forKey: Self.unitKey).flatMap(SpeedUnit.init(rawValue:))
             ?? SpeedUnit.defaultFor(regionCode: Locale.current.region?.identifier)
+        drivePrefs = UserDefaults.standard.data(forKey: Self.drivePrefsKey)
+            .flatMap { try? JSONDecoder().decode(DrivePreferences.self, from: $0) } ?? DrivePreferences()
         let store = ScheduledRunStore(directory: ScheduledRunStore.defaultDirectory())
         let routes = CachingRouteProvider(base: MapKitRouteProvider(), cache: RouteCache(fileURL: store.routeCacheURL))
         coordinator = RunCoordinator(store: store, routeProvider: routes, clock: SystemRunClock(), sink: nil, notifier: notifier)
@@ -218,6 +232,12 @@ final class ScheduledRunsController: ObservableObject {
 
     var isActive: Bool { snapshot.map { !$0.status.isFinished } ?? false }
 
+    /// The active run is a drive started from the map, not a saved run.
+    var isOneOffActive: Bool {
+        guard let id = activeRunID else { return false }
+        return !runs.contains { $0.id == id }
+    }
+
     func start(_ id: UUID) {
         Task {
             if let message = await coordinator.startNow(runID: id) {
@@ -225,6 +245,44 @@ final class ScheduledRunsController: ObservableObject {
             }
             scheduleTimer()
         }
+    }
+
+    /// A one-off drive from the map, built from `drivePrefs`. Starts from the
+    /// simulated location when spoofing, otherwise from `origin` (real GPS).
+    func makeDrive(to place: PlaceRef, origin: PlaceRef?) -> ScheduledRun {
+        var actions: [RunAction] = []
+        if let origin { actions.append(RunAction(.setLocation(origin))) }
+        actions.append(RunAction(.driveTo(place, speed: nil)))
+        var run = ScheduledRun(name: "Drive to \(place.name)", actions: actions, schedule: .manual, tint: 1)
+        apply(drivePrefs, to: &run)
+        return run
+    }
+
+    /// Re-applies speed/traffic settings, keeping step identities (and so the
+    /// same red lights) stable.
+    func apply(_ prefs: DrivePreferences, to run: inout ScheduledRun) {
+        run.defaultSpeed = prefs.speed
+        run.motion.realism = prefs.realism
+    }
+
+    func startOneOff(_ run: ScheduledRun) {
+        Task {
+            if let message = await coordinator.startOneOff(run) {
+                errorMessage = message
+            } else {
+                NotificationCenter.default.post(name: .locusOpenActiveRun, object: nil)
+            }
+            scheduleTimer()
+        }
+    }
+
+    /// Ends any run and returns the iPhone to its real location.
+    func turnOffLocus(session: SpoofSession, pairing: PairingStore) {
+        if isActive { coordinator.cancel(stopSpoofing: true) }
+        if session.isSpoofing || session.simulated != nil || session.status.isDropped {
+            session.stop(pairing: pairing)
+        }
+        scheduleTimer()
     }
 
     func pause() { coordinator.pause(); scheduleTimer() }
@@ -252,4 +310,10 @@ final class ScheduledRunsController: ObservableObject {
         #endif
         return notes
     }
+}
+
+/// Remembered choices for map drives.
+struct DrivePreferences: Codable, Equatable {
+    var speed: SpeedPolicy = .followLimit
+    var realism: DriveRealism = .natural
 }

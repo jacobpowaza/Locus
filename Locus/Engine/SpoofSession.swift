@@ -78,6 +78,10 @@ final class SpoofSession: ObservableObject {
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
+    /// Friendly name of where we're simulating (search result, favorite…).
+    @Published var simulatedName: String?
+    /// Walking a route started from the map.
+    @Published private(set) var followingRouteTo: String?
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -108,14 +112,27 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
-    func teleport(to coordinate: CLLocationCoordinate2D, pairing: PairingStore) {
+    func teleport(to coordinate: CLLocationCoordinate2D, name: String? = nil, pairing: PairingStore) {
         guard pairing.hasPairingFile else {
-            lastError = "Import an RPPairing file in Settings first."
+            lastError = Self.notPairedMessage
             return
         }
         onManualControl?("teleport")
+        cancelRoute()
+        if joystickActive { stopJoystick() }
         pin = coordinate
-        apply(coordinate, pairing: pairing, markRecent: true)
+        if apply(coordinate, pairing: pairing, markRecent: name == nil) {
+            simulatedName = name
+            if let name { pushNamedRecent(name: name, coordinate: coordinate) }
+        }
+    }
+
+    static let notPairedMessage = "Locus isn't connected to this iPhone yet. Open Settings › Connection to finish setup."
+
+    private func cancelRoute() {
+        routeTask?.cancel()
+        routeTask = nil
+        followingRouteTo = nil
     }
 
     func stop(pairing: PairingStore) {
@@ -125,8 +142,7 @@ final class SpoofSession: ObservableObject {
 
     @discardableResult
     private func performStop() -> Bool {
-        routeTask?.cancel()
-        routeTask = nil
+        cancelRoute()
         stopJoystick()
         stopResend()
         stopHealth()
@@ -136,6 +152,7 @@ final class SpoofSession: ObservableObject {
         switch result {
         case .success:
             simulated = nil
+            simulatedName = nil
             status = .idle
             endBackground()
             // Keep location updates running so the map puck / locate button
@@ -159,10 +176,8 @@ final class SpoofSession: ObservableObject {
         guard pairing.hasPairingFile else { return false }
         #endif
         if joystickActive { stopJoystick() }
-        if routeTask != nil {
-            routeTask?.cancel()
-            routeTask = nil
-        }
+        if routeTask != nil { cancelRoute() }
+        if simulatedName != nil { simulatedName = nil }
         return apply(coordinate, pairing: pairing, markRecent: false, surfaceErrors: false)
     }
 
@@ -184,13 +199,15 @@ final class SpoofSession: ObservableObject {
 
     func startJoystick(pairing: PairingStore) {
         guard pairing.hasPairingFile else {
-            lastError = "Import an RPPairing file in Settings first."
+            lastError = Self.notPairedMessage
             return
         }
         onManualControl?("joystick")
+        cancelRoute()
+        simulatedName = nil
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
-            lastError = "Drop a pin or teleport somewhere before using the joystick."
+            lastError = "Locus can't find your location yet. Teleport somewhere first, then use the joystick."
             return
         }
         if simulated == nil {
@@ -216,12 +233,23 @@ final class SpoofSession: ObservableObject {
         joystickTimer = nil
     }
 
-    func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
-        guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
+    func followRoute(
+        _ coordinates: [CLLocationCoordinate2D],
+        mode: TravelMode? = nil,
+        destinationName: String? = nil,
+        pairing: PairingStore
+    ) {
+        guard pairing.hasPairingFile else {
+            lastError = Self.notPairedMessage
+            return
+        }
+        guard coordinates.count >= 2 else { return }
         onManualControl?("route")
         routeTask?.cancel()
         stopJoystick()
-        let mode = travelMode
+        simulatedName = nil
+        followingRouteTo = destinationName ?? "your destination"
+        let mode = mode ?? travelMode
         routeTask = Task { [weak self] in
             guard let self else { return }
             var previous = coordinates[0]
@@ -250,6 +278,12 @@ final class SpoofSession: ObservableObject {
                     }
                 }
                 previous = next
+            }
+            if !Task.isCancelled {
+                await MainActor.run {
+                    self.followingRouteTo = nil
+                    self.simulatedName = destinationName
+                }
             }
         }
     }

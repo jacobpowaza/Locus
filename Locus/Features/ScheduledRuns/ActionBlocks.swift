@@ -44,7 +44,7 @@ struct ActionBlockRow: View {
     @ViewBuilder private var sentence: some View {
         switch action.kind {
         case .setLocation(let p):
-            flow { Text("Set location to"); ParamToken(text: p.name, color: color) }
+            flow { Text("Teleport to"); ParamToken(text: p.name, color: color) }
         case .driveTo(let p, let speed):
             flow {
                 Text("Drive to")
@@ -55,17 +55,17 @@ struct ActionBlockRow: View {
             flow { Text("Wait"); ParamToken(text: RunFormat.duration(s), color: color) }
         case .startAt(let t, let day):
             flow {
-                Text("Start at")
+                Text("Wait until")
                 ParamToken(text: RunFormat.timeOfDay(t), color: color)
                 if day > 0 { ParamToken(text: day == 1 ? "next day" : "+\(day) days", color: color) }
             }
         case .setSpeed(let p):
-            flow { Text("Set speed to"); ParamToken(text: p.summary(unit: unit), color: color) }
+            flow { Text("Change speed to"); ParamToken(text: p.summary(unit: unit), color: color) }
         case .stopSpoofing:
-            Text("Stop spoofing").font(.subheadline.weight(.semibold))
+            Text("Turn off Locus").font(.subheadline.weight(.semibold))
         case .repeatPrevious(let count, let times):
             flow {
-                Text("Repeat previous")
+                Text("Repeat the last")
                 ParamToken(text: "\(count) step\(count == 1 ? "" : "s")", color: color)
                 ParamToken(text: "\(times)×", color: color)
             }
@@ -82,22 +82,21 @@ struct ActionBlockRow: View {
 
     private var detail: String? {
         switch action.kind {
-        case .driveTo(_, nil): return "Uses the run's current speed"
-        case .stopSpoofing: return "Your iPhone goes back to its real GPS location"
-        case .repeatPrevious(_, let times): return "Plays the block \(times + 1) times in total"
+        case .stopSpoofing: return "Your iPhone goes back to its real location"
+        case .repeatPrevious(_, let times): return "\(times + 1) times in total"
         default: return nil
         }
     }
 
     private var accessibilitySentence: String {
         switch action.kind {
-        case .setLocation(let p): return "Set location to \(p.name)"
+        case .setLocation(let p): return "Teleport to \(p.name)"
         case .driveTo(let p, let s): return "Drive to \(p.name)" + (s.map { ", \($0.summary(unit: unit))" } ?? "")
         case .wait(let s): return "Wait \(RunFormat.duration(s))"
-        case .startAt(let t, let d): return "Start at \(RunFormat.timeOfDay(t))" + (d > 0 ? ", \(d) day later" : "")
-        case .setSpeed(let p): return "Set speed to \(p.summary(unit: unit))"
-        case .stopSpoofing: return "Stop spoofing"
-        case .repeatPrevious(let c, let t): return "Repeat previous \(c) steps \(t) times"
+        case .startAt(let t, let d): return "Wait until \(RunFormat.timeOfDay(t))" + (d > 0 ? ", \(d) day later" : "")
+        case .setSpeed(let p): return "Change speed to \(p.summary(unit: unit))"
+        case .stopSpoofing: return "Turn off Locus"
+        case .repeatPrevious(let c, let t): return "Repeat the last \(c) steps \(t) more times"
         }
     }
 }
@@ -130,37 +129,44 @@ struct AddActionSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(options.indices, id: \.self) { i in
-                    let category = options[i].0
-                    let kind = options[i].1
-                    Button {
-                        onPick(kind)
-                        dismiss()
-                    } label: {
-                        HStack(spacing: 12) {
-                            ActionGlyph(category: category, size: 36)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(RunsStyle.title(category))
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                Text(RunsStyle.blurb(category))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(RunsStyle.color(category))
-                        }
-                        .contentShape(Rectangle())
-                    }
+                Section {
+                    ForEach(0..<4, id: \.self) { optionRow($0) }
+                }
+                Section("More") {
+                    ForEach(4..<options.count, id: \.self) { optionRow($0) }
                 }
             }
-            .navigationTitle("Add Action")
+            .navigationTitle("Add Step")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
+        }
+    }
+
+    private func optionRow(_ i: Int) -> some View {
+        let category = options[i].0
+        let kind = options[i].1
+        return Button {
+            onPick(kind)
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                ActionGlyph(category: category, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(RunsStyle.title(category))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(RunsStyle.blurb(category))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(RunsStyle.color(category))
+            }
+            .contentShape(Rectangle())
         }
     }
 
@@ -213,18 +219,18 @@ struct ActionEditorSheet: View {
         case .setLocation(let place):
             PlaceField(place: Binding(get: { place }, set: { action.kind = .setLocation($0) }), title: "Location")
             Section {
-                Text("Jumps instantly — no travel time.").font(.footnote).foregroundStyle(.secondary)
+                Text("Appears there instantly, no travel time.").font(.footnote).foregroundStyle(.secondary)
             }
 
         case .driveTo(let place, let speed):
             PlaceField(place: Binding(get: { place }, set: { action.kind = .driveTo($0, speed: speed) }), title: "Destination")
             Section {
-                Toggle("Custom speed for this drive", isOn: Binding(
+                Toggle("Different speed for this drive", isOn: Binding(
                     get: { speed != nil },
                     set: { action.kind = .driveTo(place, speed: $0 ? .followLimit : nil) }
                 ))
             } footer: {
-                Text("Off: uses the run's speed (default or the latest Set Speed step).")
+                Text("Off: uses the run's speed from Driving settings.")
             }
             if let speed {
                 SpeedPolicyEditor(policy: Binding(get: { speed }, set: { action.kind = .driveTo(place, speed: $0) }), unit: unit, referenceSource: nil)
@@ -253,7 +259,7 @@ struct ActionEditorSheet: View {
                     ForEach(2...6, id: \.self) { Text("\($0) days later").tag($0) }
                 }
             } footer: {
-                Text("Holds at the current location until this time in the run's time zone. If earlier steps run long, this step starts as soon as they finish and the preview flags it.")
+                Text("Stays put until this time. If earlier steps run long, Locus moves on as soon as they finish.")
             }
 
         case .setSpeed(let policy):
@@ -261,7 +267,7 @@ struct ActionEditorSheet: View {
 
         case .stopSpoofing:
             Section {
-                Text("Ends location simulation. Your iPhone returns to its real GPS location. Add Set Location afterwards to spoof again.")
+                Text("Your iPhone goes back to its real location. Add a Teleport step after this to start again.")
             }
 
         case .repeatPrevious(let count, let times):
@@ -270,10 +276,10 @@ struct ActionEditorSheet: View {
                     LabeledContent("Steps to repeat", value: "\(count)")
                 }
                 Stepper(value: Binding(get: { times }, set: { action.kind = .repeatPrevious(count: count, times: $0) }), in: 1...RunValidator.maxRepeatTimes) {
-                    LabeledContent("Extra times", value: "\(times)")
+                    LabeledContent("More times", value: "\(times)")
                 }
             } footer: {
-                Text("Repeats the \(count) step\(count == 1 ? "" : "s") above this one \(times) more time\(times == 1 ? "" : "s") (\(times + 1) in total). To repeat the whole run on a schedule, use the run's Schedule instead.")
+                Text("Does the \(count) step\(count == 1 ? "" : "s") above this one again, \(times + 1) times in total.")
             }
         }
     }

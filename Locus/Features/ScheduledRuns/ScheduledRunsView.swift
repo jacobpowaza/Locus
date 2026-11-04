@@ -18,11 +18,6 @@ struct ScheduledRunsView: View {
         var isNew: Bool
     }
 
-    private var upcoming: [(run: ScheduledRun, date: Date)] {
-        runs.runs.compactMap { r in runs.nextOccurrence(of: r).map { (r, $0) } }
-            .sorted { $0.date < $1.date }
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -41,7 +36,7 @@ struct ScheduledRunsView: View {
                 if runs.runs.isEmpty {
                     Section { emptyState }
                 } else {
-                    Section("My Runs") {
+                    Section {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                             ForEach(runs.runs) { run in
                                 RunTile(
@@ -60,66 +55,34 @@ struct ScheduledRunsView: View {
                     }
                 }
 
-                if !upcoming.isEmpty {
-                    Section("Upcoming") {
-                        ForEach(Array(upcoming.prefix(6).enumerated()), id: \.offset) { _, item in
-                            HStack(spacing: 12) {
-                                Circle().fill(RunsStyle.tint(item.run.tint)).frame(width: 10, height: 10)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.run.name).font(.subheadline.weight(.semibold))
-                                    Text(RunFormat.dayAndTime(item.date, timeZone: item.run.timeZone))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(item.date, style: .relative)
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-
-                if let last = runs.history.first {
-                    Section("Recent") {
-                        Button { showHistory = true } label: {
-                            HStack {
-                                HistoryRow(record: last, unit: runs.unit)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                }
-
-                Section {
-                    Button { showHowItWorks = true } label: {
-                        Label("How scheduling works on iPhone", systemImage: "info.circle")
-                    }
-                    .tint(LocusTheme.accent)
-                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Scheduled Runs")
+            .onAppear { runs.isPresentingRunsUI = true }
+            .onDisappear { runs.isPresentingRunsUI = false }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button { showHistory = true } label: { Image(systemName: "clock.arrow.circlepath") }
-                        .accessibilityLabel("Run history")
+                ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button { editing = EditorTarget(run: blankRun(), isNew: true) } label: {
-                            Label("New Run", systemImage: "plus")
+                        Button { showHistory = true } label: {
+                            Label("History", systemImage: "clock.arrow.circlepath")
                         }
                         Button { editing = EditorTarget(run: commuteExample(), isNew: true) } label: {
-                            Label("Commute Example", systemImage: "car")
+                            Label("Try an Example", systemImage: "car")
+                        }
+                        Button { showHowItWorks = true } label: {
+                            Label("How It Works", systemImage: "info.circle")
                         }
                     } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("More")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { editing = EditorTarget(run: blankRun(), isNew: true) } label: {
                         Image(systemName: "plus")
-                    } primaryAction: {
-                        editing = EditorTarget(run: blankRun(), isNew: true)
                     }
                     .accessibilityLabel("New run")
                 }
@@ -175,9 +138,9 @@ struct ScheduledRunsView: View {
             Image(systemName: "calendar.badge.clock")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(LocusTheme.accent)
-            Text("Automate your location")
+            Text("Put your location on autopilot")
                 .font(.title3.weight(.bold))
-            Text("Chain steps like Set Location, Wait and Drive To, then run them now or on a schedule.")
+            Text("For example: teleport home, wait until 9 AM, then drive to work, every weekday.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -191,7 +154,7 @@ struct ScheduledRunsView: View {
                 Button {
                     editing = EditorTarget(run: commuteExample(), isNew: true)
                 } label: {
-                    Label("Try the commute", systemImage: "car")
+                    Label("Try an Example", systemImage: "car")
                 }
                 .buttonStyle(LocusPillButtonStyle(role: .secondary))
             }
@@ -205,7 +168,7 @@ struct ScheduledRunsView: View {
             ProgressView()
             VStack(alignment: .leading) {
                 Text("Starting \(r.name)…").font(.subheadline.weight(.semibold))
-                Text("Getting routes from Apple Maps").font(.caption).foregroundStyle(.secondary)
+                Text("Finding the route").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -235,7 +198,9 @@ struct ScheduledRunsView: View {
     }
 
     private func blankRun() -> ScheduledRun {
-        ScheduledRun(name: "New Run", tint: runs.runs.count % RunsStyle.tints.count)
+        var r = ScheduledRun(name: "", tint: runs.runs.count % RunsStyle.tints.count)
+        r.motion.realism = runs.drivePrefs.realism
+        return r
     }
 
     private func commuteExample() -> ScheduledRun {
@@ -248,6 +213,7 @@ struct ScheduledRunsView: View {
             ?? PlaceRef(name: "Work", point: GeoPoint(latitude: homePlace.point.latitude + 0.03, longitude: homePlace.point.longitude + 0.02))
         var r = ScheduledRun.commuteTemplate(home: homePlace, work: workPlace)
         r.tint = 1
+        r.motion.realism = runs.drivePrefs.realism
         return r
     }
 }
@@ -311,10 +277,10 @@ struct RunTile: View {
     private var isOff: Bool { run.schedule.isAutomatic && !run.isEnabled }
 
     private var subtitle: String {
-        let steps = "\(run.actions.count) step\(run.actions.count == 1 ? "" : "s")"
-        if run.schedule.isAutomatic && !run.isEnabled { return "\(steps) · Schedule off" }
-        if let next { return "\(steps) · Next \(RunFormat.dayAndTime(next, timeZone: run.timeZone))" }
-        return "\(steps) · \(RunFormat.schedule(run.schedule))"
+        if run.schedule.isAutomatic && !run.isEnabled { return "Schedule off" }
+        if let next { return "Next: \(RunFormat.dayAndTime(next, timeZone: run.timeZone))" }
+        if case .manual = run.schedule { return "Tap ▶ to run" }
+        return RunFormat.schedule(run.schedule)
     }
 }
 

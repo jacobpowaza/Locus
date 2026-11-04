@@ -45,7 +45,7 @@ struct MapDropPin: View {
         .animation(.easeOut(duration: 0.15), value: isDragging)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(selected ? "Selected pin" : "Map pin")
-        .accessibilityHint("Tap to show remove. Touch and hold to drag.")
+        .accessibilityHint("Tap for details. Touch and hold to move it.")
     }
 
     private var dragGesture: some Gesture {

@@ -118,7 +118,7 @@ enum CompileError: Error, LocalizedError, Equatable {
         case .invalid(let issues):
             return issues.first { $0.severity == .error }?.message ?? "This run has errors."
         case .noStartLocation:
-            return "Drive To needs a starting point. Add a Set Location step first, or start spoofing a location before running."
+            return "Drive To needs a starting point. Add a Teleport step first, or teleport somewhere before running."
         case .routeFailed(_, let dest, let reason):
             return "Couldn't get a driving route to \(dest): \(reason) Check your connection and try again."
         case .malformedRoute(_, let dest, let reason):
@@ -266,7 +266,19 @@ struct RunCompiler {
                     expectedTravelTime: route.expectedTravelTime,
                     travelModeDefault: TravelDefaults.driveSpeed
                 )
-                let profile = DriveProfile(route: line, reference: reference, policy: custom ?? policy, motion: run.motion)
+                // Same seed for the same step, so the preview matches the run.
+                var rng = SeededGenerator(uuid: id, salt: UInt64(e.iteration))
+                let realism = run.motion.realism ?? .off
+                let stops = DriveRealismPlanner.stops(along: line, reference: reference, realism: realism, using: &rng)
+                let knots = realism.varySpeed ? DriveRealismPlanner.speedKnots(along: line.length, using: &rng) : []
+                let profile = DriveProfile(
+                    route: line,
+                    reference: reference,
+                    policy: custom ?? policy,
+                    motion: run.motion,
+                    stops: stops,
+                    speedKnots: knots
+                )
                 let leg = DriveLeg(
                     destination: place,
                     profile: profile,

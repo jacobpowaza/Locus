@@ -97,12 +97,12 @@ struct TimelineRow: View {
     private var summary: String {
         let fmt = RunFormat(unit: unit)
         switch segment.kind {
-        case .teleport(let p): return "Set location · \(p.name)"
+        case .teleport(let p): return "Teleport · \(p.name)"
         case .hold(let s): return "Wait \(RunFormat.duration(s))"
         case .waitUntil(let d): return "Start at \(RunFormat.time(d, timeZone: timeZone))"
         case .drive(let leg): return "Drive to \(leg.destination.name) · \(fmt.distance(leg.profile.distance))"
         case .setSpeed(let p): return "Speed: \(p.summary(unit: unit))"
-        case .stop: return "Stop spoofing"
+        case .stop: return "Turn off Locus"
         }
     }
 

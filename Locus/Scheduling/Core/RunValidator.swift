@@ -78,9 +78,9 @@ enum RunValidator {
                 if let p = speed?.validationProblem { issues.append(.error(p, id)) }
                 switch loc {
                 case .none:
-                    issues.append(.error("Spoofing was stopped earlier, so there's nowhere to drive from. Add Set Location before this drive.", id))
+                    issues.append(.error("Locus was turned off by an earlier step, so there's nowhere to drive from. Add a Teleport step before this drive.", id))
                 case .runtime where !warnedRuntimeStart:
-                    issues.append(.warning("Starts from wherever Locus is spoofing when the run begins. Add Set Location first for a predictable start.", id))
+                    issues.append(.warning("Starts from wherever you are when the run begins. Add a Teleport step first to always start from the same place.", id))
                     warnedRuntimeStart = true
                 default:
                     break
@@ -96,11 +96,11 @@ enum RunValidator {
 
             case .startAt(let time, let dayOffset):
                 if dayOffset < 0 || dayOffset > 6 {
-                    issues.append(.error("Start At can be at most 6 days after the run starts.", id))
+                    issues.append(.error("Wait Until can be at most 6 days after the run starts.", id))
                 }
                 let key = (day: dayOffset, minutes: time.minutesSinceMidnight)
                 if let last = lastStartAt, (key.day, key.minutes) < (last.day, last.minutes) {
-                    issues.append(.error("This time is earlier than a previous Start At step. Reorder the steps or use \"Next day\".", id))
+                    issues.append(.error("This time is earlier than a previous Wait Until step. Reorder the steps or choose \"Next day\".", id))
                 }
                 lastStartAt = key
 
@@ -121,7 +121,7 @@ enum RunValidator {
                         issues.append(.error("A Repeat can't include another Repeat.", id))
                     }
                     if range.contains(where: { $0.kind.category == .startAt }) {
-                        issues.append(.warning("Repeated Start At steps won't wait again once their time has passed.", id))
+                        issues.append(.warning("Repeated Wait Until steps won't wait again once their time has passed.", id))
                     }
                 }
                 if times < 1 || times > maxRepeatTimes {

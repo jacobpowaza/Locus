@@ -1,19 +1,22 @@
 # Scheduled Runs
 
 Scheduled Runs automate location changes. You build a run from blocks, then
-start it yourself or let it start on a schedule. Open it from the calendar
-button in the map's top toolbar, or with `locus://runs`.
+start it yourself or let it start on a schedule. Open it from **Scheduled**
+in the map's bottom panel, or with `locus://runs`.
 
-## Blocks
+Drives started from the map (search a place → **Drive**) use the same engine
+as a one-off run that isn't saved to the list.
 
-| Block | What it does |
+## Steps
+
+| Step | What it does |
 |---|---|
-| **Set Location** | Jumps to a place instantly (map pin, search, favorite, recent, current spoof). |
+| **Teleport** (Set Location) | Jumps to a place instantly (map pin, search, favorite, recent, current spoof). |
 | **Drive To** | Drives along Apple Maps roads from the current simulated location. Can override the speed for that one leg ("Custom Speed"). |
 | **Wait** | Stays put for a set duration. |
-| **Start At** | Holds until a time of day (same day, or 1–6 days later) in the run's time zone. |
-| **Set Speed** | Changes the speed used by the drives that follow. |
-| **Stop Spoofing** | Ends simulation, so the phone goes back to real GPS. |
+| **Wait Until** (Start At) | Holds until a time of day (same day, or 1–6 days later) in the run's time zone. |
+| **Change Speed** (Set Speed) | Changes the speed used by the drives that follow. |
+| **Turn Off Locus** (Stop Spoofing) | Ends simulation, so the phone goes back to real GPS. |
 | **Repeat** | Repeats the previous *N* steps *K* more times. Repeating the whole run on a schedule is done with the run's **Schedule** instead. |
 
 You can add, edit (tap), duplicate (swipe or long-press), delete, and reorder
@@ -24,6 +27,24 @@ apply to.
 Example (Commute template): Start At 10:00 → Set Location Home → Wait 15 min
 → Start At 10:30 → Set Speed: Follow limit → Drive To Work. The run arrives
 around 10:50 and stays at Work.
+
+## Traffic realism
+
+Under **Driving** in a run (and in the map's Drive sheet) you can turn on:
+
+- **Stop at red lights** — some intersections hold the car for a random time,
+  from about a fifth of the limit up to the limit you pick (30 s – 3 min).
+- **Stop at stop signs** — brief 2–4 s full stops at many turns and on slow
+  residential streets.
+- **Vary speed naturally** — the target drifts about ±8 % every few hundred metres.
+
+MapKit doesn't expose where real signals and signs are, so stops are placed at
+the route's turns (heading change > 50°) and at plausible intersection spacing
+on roads slower than ~45 mph. Stops are seeded from the step's ID, so the
+editor's estimate matches the actual run. The car brakes into each stop and
+pulls away with the normal acceleration limits; the live view shows "Waiting
+at a red light". Settings are stored in `MotionSettings.realism` (optional, so
+older saved runs decode unchanged).
 
 ## Speed
 

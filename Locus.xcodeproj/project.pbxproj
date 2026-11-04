@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		12D34C4D15C43A7436C738FE /* DriveOptionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */; };
+		5D22F1A0AB9C98EB3B790C95 /* HomePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92D14F5297882F543A7D4A44 /* HomePanel.swift */; };
+		F2F38D17D41614B7AEFBB948 /* PlaceSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C56ABB26151A24AE119F04B /* PlaceSearch.swift */; };
+		8D9FE41466C0BB47CD6F108B /* DriveRealism.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF42F63CB202C82B28C65175 /* DriveRealism.swift */; };
 		0C78ABD1E0B70A0732F7EE2F /* PairOnDeviceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE84038C9223A84BAFFAE233 /* PairOnDeviceView.swift */; };
 		170627CC7AAA8335B2A3277F /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = D8943CD40A866E202F7964F6 /* AppIcon.icon */; };
 		1A9609434342E76342B42B54 /* LocusEasterEggView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 361C48381EA09BB299BD110E /* LocusEasterEggView.swift */; };
@@ -19,7 +23,6 @@
 		74A5BCF6953128864737A070 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2D4CA41C622A34E45EF21F54 /* Assets.xcassets */; };
 		824D08C2AC8FD477F58DE51F /* LocalDevVPN.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFAD463F53BD704A35A8E65F /* LocalDevVPN.swift */; };
 		83D63478BF012E572D329843 /* PairableHostAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD401B2BF295561897BDABE6 /* PairableHostAdvertiser.swift */; };
-		87B0D41458D6AF0D39C9AAA4 /* RoutePlannerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76779E56819A74B78236EF1 /* RoutePlannerSheet.swift */; };
 		8EAFB147F0F0E2AAE207D276 /* RouteBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC0C702516F159A7EF6D853 /* RouteBuilder.swift */; };
 		976D8B4B49C6B6588EA59B2F /* LocusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03DE64DA7097F210F1075553 /* LocusApp.swift */; };
 		AB35A419877FF9CA0B4AB114 /* JoystickPad.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF6D1EA6EBAAF543339FF81 /* JoystickPad.swift */; };
@@ -57,6 +60,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveOptionsSheet.swift; sourceTree = "<group>"; };
+		92D14F5297882F543A7D4A44 /* HomePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomePanel.swift; sourceTree = "<group>"; };
+		7C56ABB26151A24AE119F04B /* PlaceSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSearch.swift; sourceTree = "<group>"; };
+		BF42F63CB202C82B28C65175 /* DriveRealism.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveRealism.swift; sourceTree = "<group>"; };
 		03DE64DA7097F210F1075553 /* LocusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusApp.swift; sourceTree = "<group>"; };
 		0E1C1367D937C33DF4F1FBE6 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1FC0C702516F159A7EF6D853 /* RouteBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteBuilder.swift; sourceTree = "<group>"; };
@@ -80,7 +87,6 @@
 		BFAD463F53BD704A35A8E65F /* LocalDevVPN.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDevVPN.swift; sourceTree = "<group>"; };
 		C6C3F15BC482A2CBF13B1EA6 /* SpoofSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpoofSession.swift; sourceTree = "<group>"; };
 		CFF6D1EA6EBAAF543339FF81 /* JoystickPad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoystickPad.swift; sourceTree = "<group>"; };
-		D76779E56819A74B78236EF1 /* RoutePlannerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutePlannerSheet.swift; sourceTree = "<group>"; };
 		D8943CD40A866E202F7964F6 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		E2BC5277FD75A01A31B9830D /* PairOnDeviceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairOnDeviceService.swift; sourceTree = "<group>"; };
 		F714A23C4C718E67E978565F /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
@@ -151,6 +157,9 @@
 			children = (
 				797AA07D5CE5A7FD9D385F5F /* MapDropPin.swift */,
 				F714A23C4C718E67E978565F /* MapHomeView.swift */,
+				39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */,
+				92D14F5297882F543A7D4A44 /* HomePanel.swift */,
+				7C56ABB26151A24AE119F04B /* PlaceSearch.swift */,
 				FF1AF0F32E88B4227CA45694 /* RootView.swift */,
 			);
 			path = Map;
@@ -169,7 +178,6 @@
 			children = (
 				36D52643D1CA99DF029BE655 /* Joystick */,
 				2C7F6D726AC574C9600B5F9A /* Map */,
-				B8E755C6C753821B2A8E141A /* Routes */,
 				DDEF65227E44B8A417287BE0 /* ScheduledRuns */,
 				04819CB404D166B850594890 /* Settings */,
 				8A34AD0FBFBBBC1E8E32A474 /* Setup */,
@@ -230,14 +238,6 @@
 			path = Support;
 			sourceTree = "<group>";
 		};
-		B8E755C6C753821B2A8E141A /* Routes */ = {
-			isa = PBXGroup;
-			children = (
-				D76779E56819A74B78236EF1 /* RoutePlannerSheet.swift */,
-			);
-			path = Routes;
-			sourceTree = "<group>";
-		};
 		B9D7C7183910882434437EA5 /* Locus */ = {
 			isa = PBXGroup;
 			children = (
@@ -264,6 +264,7 @@
 			isa = PBXGroup;
 			children = (
 				810C8486629EF7ED63AB0271 /* DriveProfile.swift */,
+				BF42F63CB202C82B28C65175 /* DriveRealism.swift */,
 				496C33D2C1AD503D15B9BB43 /* GeoMath.swift */,
 				55D15F88A57F5646E87A6265 /* RunCompiler.swift */,
 				551E3154A0DA1CAB587065FC /* RunCoordinator.swift */,
@@ -377,6 +378,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1738CEE3F1E6F37057A1051 /* DriveProfile.swift in Sources */,
+				8D9FE41466C0BB47CD6F108B /* DriveRealism.swift in Sources */,
 				3070D586558D56CB3E3FC454 /* GeoMath.swift in Sources */,
 				627F947BD3A7C9B6C65D376A /* RunCompiler.swift in Sources */,
 				B189D45D7D9E43EC3B743693 /* RunCoordinator.swift in Sources */,
@@ -407,6 +409,9 @@
 				1A9609434342E76342B42B54 /* LocusEasterEggView.swift in Sources */,
 				C8CC0EF3E134ADF2BE9F995F /* MapDropPin.swift in Sources */,
 				D5613248D3DDD96C0D62BF7F /* MapHomeView.swift in Sources */,
+				12D34C4D15C43A7436C738FE /* DriveOptionsSheet.swift in Sources */,
+				5D22F1A0AB9C98EB3B790C95 /* HomePanel.swift in Sources */,
+				F2F38D17D41614B7AEFBB948 /* PlaceSearch.swift in Sources */,
 				41622C4D112CF14318210A71 /* PairOnDeviceService.swift in Sources */,
 				0C78ABD1E0B70A0732F7EE2F /* PairOnDeviceView.swift in Sources */,
 				83D63478BF012E572D329843 /* PairableHostAdvertiser.swift in Sources */,
@@ -414,7 +419,6 @@
 				AC1BBA0F82E89EB56800992E /* PairingStore.swift in Sources */,
 				B10A777C5622EE884A890643 /* RootView.swift in Sources */,
 				8EAFB147F0F0E2AAE207D276 /* RouteBuilder.swift in Sources */,
-				87B0D41458D6AF0D39C9AAA4 /* RoutePlannerSheet.swift in Sources */,
 				3F84179EF76E8AA074797361 /* SavedPlace.swift in Sources */,
 				39FCB8C0E7050B9161E600C6 /* SettingsView.swift in Sources */,
 				F42C461AA339262E17E26A10 /* SetupFlowView.swift in Sources */,

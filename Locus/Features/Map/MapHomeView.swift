@@ -1,39 +1,43 @@
 import MapKit
 import SwiftUI
 
+/// The main screen, laid out like Apple Maps: a full map, a few floating
+/// controls, and one glass panel at the bottom that holds search, the
+/// selected place, and what Locus is doing right now.
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
-    @EnvironmentObject private var scheduledRuns: ScheduledRunsController
-    @State private var showActiveRun = false
-    @State private var showScheduledRuns = false
-
-    /// Drive legs of the active Scheduled Run, drawn under the spoof marker.
-    private var activeRunLegs: [[CLLocationCoordinate2D]] {
-        guard let plan = scheduledRuns.activePlan else { return [] }
-        return plan.segments.compactMap { seg in
-            if case .drive(let leg) = seg.kind { return leg.profile.polyline.points.map(\.coordinate) }
-            return nil
-        }
-    }
+    @EnvironmentObject private var runs: ScheduledRunsController
 
     @StateObject private var search = PlaceSearchCompleter()
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
-    @State private var routeStart: CLLocationCoordinate2D?
-    @State private var routeEnd: CLLocationCoordinate2D?
-    @State private var routeCoords: [CLLocationCoordinate2D] = []
-    @State private var isRouting = false
-    @State private var showRouteSheet = false
-    @State private var showGPXImporter = false
-    @State private var drawnPath: [CLLocationCoordinate2D] = []
-    @State private var drawMode = false
-    @State private var pinSelected = false
+    @State private var selected: MapPlace?
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
-    /// Set when the pin comes from search / a named place so starring keeps the title.
-    @State private var pinPlaceName: String?
+    @State private var resolvingSearch = false
+
+    @State private var showSettings = false
+    @State private var showPlaces = false
+    @State private var showScheduledRuns = false
+    @State private var showActiveRun = false
+    @State private var drivePlace: MapPlace?
+    @State private var walkingTo: UUID?
+    @State private var importedRoute: [CLLocationCoordinate2D] = []
+    @State private var confirmTurnOff = false
+    /// Height of the bottom panel, so the map keeps its centre and legal
+    /// notice above it.
+    @State private var panelHeight: CGFloat = 160
+
+    /// Drive legs of the active run, drawn under the spoof marker.
+    private var activeRunLegs: [[CLLocationCoordinate2D]] {
+        guard let plan = runs.activePlan else { return [] }
+        return plan.segments.compactMap { seg in
+            if case .drive(let leg) = seg.kind { return leg.profile.polyline.points.map(\.coordinate) }
+            return nil
+        }
+    }
 
     private var mapStyle: MapStyle {
         switch session.mapStyleIndex {
@@ -43,100 +47,60 @@ struct MapHomeView: View {
         }
     }
 
+    private var isSearching: Bool { searchFocused || !searchText.isEmpty }
+
+    /// Where distances are measured from: the simulated spot, else real GPS.
+    private var here: CLLocationCoordinate2D? { session.simulated ?? session.realCoordinate }
+
     var body: some View {
         ZStack(alignment: .top) {
-            // Keep Map inside the safe layout bounds so MapProxy.convert matches
-            // finger position. Ignoring the safe area makes the tiles full-bleed but
-            // shifts convert() upward by ~status-bar height.
-            MapReader { proxy in
-                Map(position: $position) {
-                    UserAnnotation()
+            map
 
-                    if let pin = session.pin {
-                        Annotation("", coordinate: pin, anchor: .bottom) {
-                            MapDropPin(
-                                selected: pinSelected,
-                                isDragging: isDraggingPin,
-                                onSelect: {
-                                    searchFocused = false
-                                    suppressNextMapTap = true
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                                        pinSelected.toggle()
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        suppressNextMapTap = false
-                                    }
-                                },
-                                onRemove: {
-                                    suppressNextMapTap = true
-                                    withAnimation {
-                                        session.pin = nil
-                                        pinSelected = false
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        suppressNextMapTap = false
-                                    }
-                                },
-                                onDragBegan: {
-                                    searchFocused = false
-                                    suppressNextMapTap = true
-                                    pinSelected = false
-                                    isDraggingPin = true
-                                },
-                                onDragMoved: { globalPoint in
-                                    if let coord = proxy.convert(globalPoint, from: .global) {
-                                        session.pin = coord
-                                    }
-                                },
-                                onDragEnded: {
-                                    isDraggingPin = false
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                        suppressNextMapTap = false
-                                    }
-                                }
-                            )
-                        }
-                    }
-                    if let sim = session.simulated {
-                        Annotation("Spoof", coordinate: sim) {
-                            ZStack {
-                                Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
-                                Circle().fill(LocusTheme.accent).frame(width: 14, height: 14)
-                                    .overlay(Circle().stroke(.white, lineWidth: 2))
-                            }
-                        }
-                    }
-                    if routeCoords.count > 1 {
-                        MapPolyline(coordinates: routeCoords)
-                            .stroke(LocusTheme.accent, lineWidth: 5)
-                    }
-                    ForEach(Array(activeRunLegs.enumerated()), id: \.offset) { _, leg in
-                        MapPolyline(coordinates: leg)
-                            .stroke(LocusTheme.accentSecondary.opacity(0.8), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 6]))
-                    }
-                    if drawnPath.count > 1 {
-                        MapPolyline(coordinates: drawnPath)
-                            .stroke(LocusTheme.accentSecondary, style: StrokeStyle(lineWidth: 4, dash: [6, 4]))
-                    }
+            VStack(spacing: 8) {
+                topChrome
+                Spacer(minLength: 0)
+                if session.joystickActive && !isSearching {
+                    joystickControls
                 }
-                .mapStyle(mapStyle)
-                .mapControlVisibility(.hidden)
-                .onTapGesture { point in
-                    searchFocused = false
-                    guard !suppressNextMapTap, !isDraggingPin else { return }
-                    pinSelected = false
-                    placePin(at: point, proxy: proxy)
-                }
+                HomePanel(
+                    searchText: $searchText,
+                    searchFocused: $searchFocused,
+                    search: search,
+                    selected: $selected,
+                    resolvingSearch: resolvingSearch,
+                    walkingTo: walkingTo,
+                    here: here,
+                    onPickCompletion: select(completion:),
+                    onSubmitSearch: submitSearch,
+                    onPickPlace: show(_:),
+                    onTeleport: teleport(_:),
+                    onDrive: { drivePlace = $0 },
+                    onWalk: walk(to:),
+                    onTurnOff: {
+                        // Only ask when it would also end a run.
+                        if runs.isActive { confirmTurnOff = true } else { runs.turnOffLocus(session: session, pairing: pairing) }
+                    },
+                    onOpenSettings: { showSettings = true },
+                    onOpenPlaces: { showPlaces = true },
+                    onOpenRuns: { showScheduledRuns = true },
+                    onOpenActiveRun: { showActiveRun = true }
+                )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
             }
-            .background(Color.black.ignoresSafeArea())
-
-            topChrome
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
         }
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: isSearching)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: selected)
+        .animation(.snappy, value: session.joystickActive)
+        .animation(.snappy, value: runs.isActive)
         .onAppear {
             session.startLocationUpdates()
+            search.near = here
         }
-        .onChange(of: session.pin?.latitude) { _, newValue in
-            if newValue == nil { pinSelected = false }
+        .onChange(of: searchText) { _, value in
+            search.near = here
+            search.query = value
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusOpenScheduledRuns)) { _ in
             showScheduledRuns = true
@@ -148,287 +112,330 @@ struct MapHomeView: View {
             guard let url = note.object as? URL else { return }
             importGPX(url)
         }
-        .fileImporter(isPresented: $showGPXImporter, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                importGPX(url)
+        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showPlaces) {
+            PlacesView { place in
+                showPlaces = false
+                show(place)
             }
+        }
+        .sheet(isPresented: $showScheduledRuns) {
+            ScheduledRunsView()
+        }
+        .sheet(item: $drivePlace) { place in
+            DriveOptionsSheet(destination: place, origin: session.isSpoofing ? nil : session.realCoordinate) {
+                drivePlace = nil
+                selected = nil
+            }
+            .presentationDetents([.large])
         }
         .fullScreenCover(isPresented: $showActiveRun) {
             ActiveRunView()
         }
-        .sheet(isPresented: $showScheduledRuns) {
-            ScheduledRunsView()
-                .presentationDetents([.medium, .large])
+        .confirmationDialog("Turn off Locus?", isPresented: $confirmTurnOff, titleVisibility: .visible) {
+            Button("End and Turn Off", role: .destructive) {
+                runs.turnOffLocus(session: session, pairing: pairing)
+            }
+        } message: {
+            Text("This ends \"\(runs.activeRunName ?? "the run")\" and your iPhone goes back to its real location.")
         }
-        .animation(.snappy, value: scheduledRuns.isActive)
-        .sheet(isPresented: $showRouteSheet) {
-            RoutePlannerSheet(
-                start: $routeStart,
-                end: $routeEnd,
-                isRouting: $isRouting,
-                onBuild: buildRoadRoute,
-                onPlay: playRoute,
-                onImportGPX: { showGPXImporter = true },
-                onExportGPX: exportGPX,
-                onUseDrawn: {
-                    routeCoords = RouteBuilder.sample(coordinates: drawnPath, every: 10)
-                    drawnPath.removeAll()
-                    drawMode = false
-                }
-            )
-            .presentationDetents([.medium, .large])
+        .sensoryFeedback(.success, trigger: session.isSpoofing)
+        .alert("Follow this route?", isPresented: Binding(get: { !importedRoute.isEmpty }, set: { if !$0 { importedRoute = [] } })) {
+            Button("Walk It") { followImported(.walk) }
+            Button("Drive It") { followImported(.drive) }
+            Button("Cancel", role: .cancel) { importedRoute = [] }
+        } message: {
+            Text("Locus will move along the imported GPX track.")
         }
     }
 
-    private func placePin(at point: CGPoint, proxy: MapProxy) {
-        guard let coord = proxy.convert(point, from: .local) else { return }
-        if drawMode {
-            drawnPath.append(coord)
-        } else {
-            session.pin = coord
-            pinPlaceName = nil
-            pinSelected = false
-        }
-    }
+    // MARK: Map
 
-    private var topChrome: some View {
-        VStack(spacing: 10) {
-            StatusBarView()
+    private var map: some View {
+        MapReader { proxy in
+            Map(position: $position) {
+                UserAnnotation()
 
-            ActiveRunBanner { showActiveRun = true }
-
-            searchBar
-
-            if !searchText.isEmpty && !search.results.isEmpty {
-                searchResults
-            }
-
-            HStack(alignment: .center, spacing: 10) {
-                mapChromeButtons
-                Spacer(minLength: 0)
-                locateButton
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 2)
-        .safeAreaPadding(.top, 8)
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search places", text: $searchText)
-                .textInputAutocapitalization(.words)
-                .focused($searchFocused)
-                .submitLabel(.search)
-                .onSubmit {
-                    searchFocused = false
+                if let pin = session.pin, showsPin(pin) {
+                    Annotation("", coordinate: pin, anchor: .bottom) {
+                        MapDropPin(
+                            // The place card has its own close button.
+                            selected: false,
+                            isDragging: isDraggingPin,
+                            onSelect: {
+                                searchFocused = false
+                                suppressTap()
+                                if selected == nil { show(.droppedPin(at: pin)) }
+                                lookUpAddressIfNeeded()
+                            },
+                            onRemove: {
+                                suppressTap()
+                                session.pin = nil
+                                selected = nil
+                            },
+                            onDragBegan: {
+                                searchFocused = false
+                                suppressNextMapTap = true
+                                isDraggingPin = true
+                            },
+                            onDragMoved: { globalPoint in
+                                if let coord = proxy.convert(globalPoint, from: .global) {
+                                    session.pin = coord
+                                }
+                            },
+                            onDragEnded: {
+                                isDraggingPin = false
+                                if let pin = session.pin { show(.droppedPin(at: pin)) }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    suppressNextMapTap = false
+                                }
+                            }
+                        )
+                    }
                 }
-                .onChange(of: searchText) { _, value in
-                    search.query = value
-                }
-            if searchFocused || !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    search.query = ""
-                    searchFocused = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear and dismiss keyboard")
-            }
-            if searchFocused {
-                Button("Done") {
-                    searchFocused = false
-                }
-                .font(.subheadline.weight(.semibold))
-                .buttonStyle(.plain)
-                .foregroundStyle(LocusTheme.accent)
-            }
-        }
-        .padding(12)
-        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private var searchResults: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(search.results.prefix(5), id: \.self) { item in
-                Button {
-                    select(completion: item)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                        if !item.subtitle.isEmpty {
-                            Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+                if let sim = session.simulated {
+                    Annotation(session.simulatedName ?? "You (simulated)", coordinate: sim) {
+                        ZStack {
+                            Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
+                            Circle().fill(LocusTheme.accent).frame(width: 16, height: 16)
+                                .overlay(Circle().stroke(.white, lineWidth: 3))
+                                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
+                }
+                ForEach(Array(activeRunLegs.enumerated()), id: \.offset) { _, leg in
+                    MapPolyline(coordinates: leg)
+                        .stroke(LocusTheme.accent, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .mapStyle(mapStyle)
+            .mapControlVisibility(.hidden)
+            // Keep the map's centre and Apple's legal notice above the panel.
+            .safeAreaPadding(.bottom, isSearching ? 0 : panelHeight)
+            // Global coordinates stay correct with a full-bleed map.
+            .onTapGesture(coordinateSpace: .global) { point in
+                guard !suppressNextMapTap, !isDraggingPin else { return }
+                if searchFocused {
+                    searchFocused = false
+                    return
+                }
+                guard let coord = proxy.convert(point, from: .global) else { return }
+                session.pin = coord
+                show(.droppedPin(at: coord))
+                lookUpAddressIfNeeded()
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    /// The drop pin is hidden when it sits under the simulated-location dot.
+    private func showsPin(_ pin: CLLocationCoordinate2D) -> Bool {
+        guard let sim = session.simulated else { return true }
+        return abs(sim.latitude - pin.latitude) > 0.00003 || abs(sim.longitude - pin.longitude) > 0.00003
+    }
+
+    private func suppressTap() {
+        suppressNextMapTap = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            suppressNextMapTap = false
+        }
+    }
+
+    // MARK: Floating chrome
+
+    private var topChrome: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                StatusPill(onFixSetup: { showSettings = true })
+                Spacer(minLength: 0)
+                if !isSearching {
+                    mapControls
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .topTrailing)))
+                }
+            }
+        }
+        .safeAreaPadding(.top, 4)
+    }
+
+    /// Vertical glass stack at the top right, like Apple Maps.
+    private var mapControls: some View {
+        VStack(spacing: 10) {
+            VStack(spacing: 0) {
+                Menu {
+                    Picker("Map", selection: $session.mapStyleIndex) {
+                        Label("Explore", systemImage: "map").tag(0)
+                        Label("Hybrid", systemImage: "square.2.layers.3d").tag(1)
+                        Label("Satellite", systemImage: "globe.americas.fill").tag(2)
+                    }
+                } label: {
+                    controlGlyph(session.mapStyleIndex == 0 ? "map" : "globe.americas.fill")
+                }
+                .accessibilityLabel("Map style")
+
+                Divider().frame(width: 28)
+
+                Button(action: goToCurrentLocation) {
+                    controlGlyph("location.fill")
                 }
                 .buttonStyle(.plain)
-                Divider().opacity(0.3)
+                .accessibilityLabel("Show my location")
             }
+            .locusGlass(.regular, in: Capsule())
+
+            Button {
+                if session.joystickActive {
+                    session.stopJoystick()
+                } else {
+                    session.startJoystick(pairing: pairing)
+                }
+            } label: {
+                controlGlyph("dpad.fill", color: session.joystickActive ? .black : .primary)
+                    .background(Circle().fill(session.joystickActive ? LocusTheme.accent : .clear))
+            }
+            .buttonStyle(.plain)
+            .locusGlass(.interactive, in: Circle())
+            .accessibilityLabel(session.joystickActive ? "Turn off joystick" : "Joystick")
         }
-        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private var mapChromeButtons: some View {
-        HStack(spacing: 4) {
-            chromeIconButton("square.3.layers.3d") {
-                session.mapStyleIndex = (session.mapStyleIndex + 1) % 3
-            }
-            chromeIconButton("point.topleft.down.to.point.bottomright.curvepath") {
-                showRouteSheet = true
-            }
-            chromeIconButton("calendar.badge.clock") {
-                showScheduledRuns = true
-            }
-            .accessibilityLabel("Scheduled Runs")
-            chromeIconButton(drawMode ? "pencil.tip.crop.circle.badge.minus" : "pencil.tip.crop.circle") {
-                drawMode.toggle()
-                if !drawMode { drawnPath.removeAll() }
-            }
-            .foregroundStyle(drawMode ? LocusTheme.accentSecondary : .primary)
+    private func controlGlyph(_ systemName: String, color: Color = .primary) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(color)
+            .frame(width: 46, height: 46)
+            .contentShape(Rectangle())
+    }
 
-            if session.pin != nil {
-                chromeIconButton("star.circle") {
-                    if let pin = session.pin {
-                        let name = session.suggestedFavoriteName(for: pin, fallback: pinPlaceName)
-                        session.addFavorite(name: name, coordinate: pin)
+    private var joystickControls: some View {
+        HStack(alignment: .bottom) {
+            HStack(spacing: 4) {
+                ForEach(TravelMode.allCases) { mode in
+                    let on = session.travelMode == mode
+                    Button {
+                        session.travelMode = mode
+                    } label: {
+                        Image(systemName: mode.icon)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(on ? Color.black : Color.primary)
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(on ? LocusTheme.accent : .clear))
+                            .contentShape(Circle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(mode.title)
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
+            .padding(4)
+            .locusGlass(.regular, in: Capsule())
+
+            Spacer(minLength: 8)
+
+            JoystickPad { vector in
+                session.updateJoystick(vector: vector)
+            }
+            .frame(width: 140, height: 140)
         }
-        .padding(6)
-        .locusGlass(.clear, in: Capsule())
-        .contentShape(Capsule())
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    private var locateButton: some View {
-        Button {
-            searchFocused = false
-            goToCurrentLocation()
-        } label: {
-            Image(systemName: "location.fill")
-                .font(.body.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .contentShape(Circle())
+    // MARK: Actions
+
+    private func show(_ place: MapPlace) {
+        searchFocused = false
+        searchText = ""
+        selected = place
+        session.pin = place.coordinate
+        withAnimation(.easeInOut(duration: 0.45)) {
+            position = .region(MKCoordinateRegion(center: place.coordinate, latitudinalMeters: 1400, longitudinalMeters: 1400))
         }
-        .buttonStyle(.plain)
-        .locusGlass(.interactive, in: Circle())
-        .foregroundStyle(.primary)
-        .contentShape(Circle())
-        .accessibilityLabel("Current location")
     }
 
-    /// Centers on the spoofed fix while spoofing, otherwise the real GPS —
-    /// never the leftover teleport pin (`.automatic` would frame that marker).
-    private func goToCurrentLocation() {
-        let meters: CLLocationDistance = 900
-        withAnimation(.easeInOut(duration: 0.35)) {
-            if session.isSpoofing, let sim = session.simulated {
-                position = .region(MKCoordinateRegion(
-                    center: sim,
-                    latitudinalMeters: meters,
-                    longitudinalMeters: meters
-                ))
-            } else if let real = session.realCoordinate {
-                position = .region(MKCoordinateRegion(
-                    center: real,
-                    latitudinalMeters: meters,
-                    longitudinalMeters: meters
-                ))
+    private func lookUpAddressIfNeeded() {
+        guard let place = selected, place.kind == .droppedPin else { return }
+        let id = place.id
+        Task {
+            let found = await PlaceSearchCompleter.address(for: place.coordinate)
+            guard selected?.id == id else { return }
+            if let found {
+                selected?.name = found.name
+                selected?.subtitle = found.subtitle
             } else {
-                position = .userLocation(
-                    followsHeading: false,
-                    fallback: .region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
-                        latitudinalMeters: 2000,
-                        longitudinalMeters: 2000
-                    ))
-                )
+                selected?.subtitle = String(format: "%.5f, %.5f", place.coordinate.latitude, place.coordinate.longitude)
             }
         }
-    }
-
-    private func chromeIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.body.weight(.semibold))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
     }
 
     private func select(completion: MKLocalSearchCompletion) {
+        resolvingSearch = true
         Task {
-            let request = MKLocalSearch.Request(completion: completion)
-            if let response = try? await MKLocalSearch(request: request).start(),
-               let item = response.mapItems.first {
-                let coord = item.placemark.coordinate
-                let title = item.name ?? completion.title
-                await MainActor.run {
-                    session.pin = coord
-                    pinPlaceName = title
-                    position = .region(MKCoordinateRegion(center: coord, latitudinalMeters: 1200, longitudinalMeters: 1200))
-                    searchText = ""
-                    search.query = ""
-                    searchFocused = false
-                    session.addFavorite(name: title, coordinate: coord)
-                    session.pushNamedRecent(name: title, coordinate: coord)
-                }
+            let place = await PlaceSearchCompleter.resolve(completion)
+            resolvingSearch = false
+            if let place {
+                show(place)
+            } else {
+                session.lastError = "Couldn't find \(completion.title). Check your connection and try again."
             }
         }
     }
 
-    private func buildRoadRoute() {
-        guard let start = routeStart ?? session.simulated ?? session.pin,
-              let end = routeEnd else {
-            session.lastError = "Set a route start and end."
+    private func submitSearch() {
+        let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let first = search.results.first {
+            select(completion: first)
             return
         }
-        isRouting = true
+        resolvingSearch = true
+        Task {
+            let place = await PlaceSearchCompleter.search(text, near: here)
+            resolvingSearch = false
+            if let place { show(place) } else { session.lastError = "No results for \"\(text)\"." }
+        }
+    }
+
+    private func teleport(_ place: MapPlace) {
+        let name = place.kind == .droppedPin && place.name == "Dropped Pin" ? nil : place.name
+        session.teleport(to: place.coordinate, name: name, pairing: pairing)
+        if session.isSpoofing { selected = nil }
+    }
+
+    private func walk(to place: MapPlace) {
+        guard let start = here else {
+            session.lastError = "Locus can't find your location yet. Teleport somewhere first, then walk from there."
+            return
+        }
+        walkingTo = place.id
         Task {
             do {
-                let coords = try await RouteBuilder.roadRoute(from: start, to: end, mode: session.travelMode)
-                await MainActor.run {
-                    routeCoords = coords
-                    isRouting = false
-                }
+                let coords = try await RouteBuilder.roadRoute(from: start, to: place.coordinate, mode: .walk)
+                walkingTo = nil
+                selected = nil
+                session.followRoute(coords, mode: .walk, destinationName: place.name, pairing: pairing)
             } catch {
-                await MainActor.run {
-                    isRouting = false
-                    session.lastError = error.localizedDescription
-                }
+                walkingTo = nil
+                session.lastError = "Couldn't find a walking route to \(place.name)."
             }
         }
     }
 
-    private func playRoute() {
-        let path = routeCoords.isEmpty ? drawnPath : routeCoords
-        guard path.count >= 2 else {
-            session.lastError = "Build or draw a route first."
-            return
+    /// Centers on the simulated spot while spoofing, otherwise real GPS.
+    private func goToCurrentLocation() {
+        searchFocused = false
+        withAnimation(.easeInOut(duration: 0.4)) {
+            if let c = here {
+                position = .region(MKCoordinateRegion(center: c, latitudinalMeters: 900, longitudinalMeters: 900))
+            } else {
+                position = .userLocation(fallback: .automatic)
+            }
         }
-        showRouteSheet = false
-        session.followRoute(path, pairing: pairing)
     }
 
     private func importGPX(_ url: URL) {
         do {
             let coords = try GPXCodec.parse(url)
-            routeCoords = RouteBuilder.sample(coordinates: coords, every: 10)
+            importedRoute = RouteBuilder.sample(coordinates: coords, every: 10)
             if let first = coords.first {
-                session.pin = first
                 position = .region(MKCoordinateRegion(center: first, latitudinalMeters: 2000, longitudinalMeters: 2000))
             }
         } catch {
@@ -436,54 +443,9 @@ struct MapHomeView: View {
         }
     }
 
-    private func exportGPX() {
-        let path = routeCoords.isEmpty ? drawnPath : routeCoords
-        guard !path.isEmpty else {
-            session.lastError = "Nothing to export."
-            return
-        }
-        let gpx = GPXCodec.export(path)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Locus-Route.gpx")
-        do {
-            try gpx.data(using: .utf8)?.write(to: url)
-            let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let root = scene.keyWindow?.rootViewController {
-                root.present(av, animated: true)
-            }
-        } catch {
-            session.lastError = error.localizedDescription
-        }
-    }
-}
-
-private extension UIWindowScene {
-    var keyWindow: UIWindow? { windows.first { $0.isKeyWindow } }
-}
-
-@MainActor
-final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var results: [MKLocalSearchCompletion] = []
-    private let completer = MKLocalSearchCompleter()
-
-    var query: String = "" {
-        didSet {
-            completer.queryFragment = query
-        }
-    }
-
-    override init() {
-        super.init()
-        completer.delegate = self
-        completer.resultTypes = [.address, .pointOfInterest]
-    }
-
-    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        let items = completer.results
-        Task { @MainActor in self.results = items }
-    }
-
-    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        Task { @MainActor in self.results = [] }
+    private func followImported(_ mode: TravelMode) {
+        let route = importedRoute
+        importedRoute = []
+        session.followRoute(route, mode: mode, destinationName: "the end of the route", pairing: pairing)
     }
 }

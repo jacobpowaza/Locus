@@ -49,12 +49,12 @@ struct PlanSegment: Codable, Equatable, Identifiable {
 
     var summary: String {
         switch kind {
-        case .teleport(let p): return "Set location to \(p.name)"
+        case .teleport(let p): return "Teleport to \(p.name)"
         case .hold(let s): return "Wait \(DurationText.short(s))"
-        case .waitUntil(let d): return "Start at \(DurationText.clock(d))"
+        case .waitUntil(let d): return "Wait until \(DurationText.clock(d))"
         case .drive(let leg): return "Drive to \(leg.destination.name)"
-        case .setSpeed(let p): return "Set speed: \(p.summary(unit: .mph))"
-        case .stop: return "Stop spoofing"
+        case .setSpeed(let p): return "Change speed: \(p.summary(unit: .mph))"
+        case .stop: return "Turn off Locus"
         }
     }
 }

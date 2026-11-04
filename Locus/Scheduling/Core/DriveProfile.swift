@@ -12,6 +12,8 @@ struct DriveState: Equatable {
     /// Reference ("limit") speed at this point, m/s.
     var referenceSpeed: Double
     var referenceSource: SpeedReferenceSource
+    /// Set while standing at a red light or stop sign.
+    var stoppedFor: DriveStop.Kind? = nil
 }
 
 /// A precomputed time-parameterised drive along a polyline.
@@ -34,6 +36,14 @@ struct DriveProfile: Codable, Equatable {
     private(set) var reference: SpeedReference
     private(set) var policy: SpeedPolicy
     private(set) var motion: MotionSettings
+    /// Red lights / stop signs along the route (nil when none).
+    private(set) var stops: [DriveStop]?
+    /// Seconds stood still at each node before moving on (nil when no stops).
+    private(set) var nodeDwell: [Double]?
+    /// Kind of stop at each node with a dwell.
+    private(set) var nodeStopKind: [DriveStop.Kind?]?
+    /// Speed drift along the route (nil = exactly on target).
+    private(set) var speedKnots: [SpeedKnot]?
 
     var duration: Double { nodeTimes.last ?? 0 }
     var distance: Double { polyline.length }
@@ -46,7 +56,9 @@ struct DriveProfile: Codable, Equatable {
         reference: SpeedReference,
         policy: SpeedPolicy,
         motion: MotionSettings = .standard,
-        initialSpeed: Double = 0
+        initialSpeed: Double = 0,
+        stops: [DriveStop] = [],
+        speedKnots: [SpeedKnot] = []
     ) {
         let line = route.densified(maxSpacing: Self.nodeSpacing)
         let n = line.points.count
@@ -58,7 +70,9 @@ struct DriveProfile: Codable, Equatable {
         var segTarget = [Double](repeating: 0, count: max(0, n - 1))
         for k in 0..<(n - 1) {
             let mid = (line.cumulative[k] + line.cumulative[k + 1]) / 2
-            segTarget[k] = policy.target(reference: reference.speed(atDistance: mid).value)
+            let base = policy.target(reference: reference.speed(atDistance: mid).value)
+            let drift = speedKnots.isEmpty ? 1 : DriveRealismPlanner.factor(speedKnots, atDistance: mid)
+            segTarget[k] = min(SpeedPolicy.maximumSpeed, max(SpeedPolicy.minimumSpeed, base * drift))
         }
         var v = [Double](repeating: 0, count: n)
         for i in 0..<n {
@@ -83,7 +97,24 @@ struct DriveProfile: Codable, Equatable {
             }
         }
 
-        // 3. Endpoints and acceleration limits.
+        // 3. Full stops (red lights / stop signs) snap to the nearest inner
+        // node; the passes below brake into and pull away from them.
+        var dwell = [Double](repeating: 0, count: n)
+        var stopKind = [DriveStop.Kind?](repeating: nil, count: n)
+        var keptStops: [DriveStop] = []
+        if n >= 3 {
+            for stop in stops.sorted(by: { $0.distance < $1.distance }) where stop.dwell > 0 {
+                guard stop.distance > 0, stop.distance < line.length else { continue }
+                let i = Self.nearestNode(line.cumulative, stop.distance)
+                guard i > 0, i < n - 1 else { continue }
+                v[i] = 0
+                dwell[i] += stop.dwell
+                stopKind[i] = stopKind[i] == .redLight ? .redLight : stop.kind
+                keptStops.append(stop)
+            }
+        }
+
+        // 4. Endpoints and acceleration limits.
         v[0] = max(0, min(initialSpeed, SpeedPolicy.maximumSpeed))
         v[n - 1] = 0
         if motion.smoothing {
@@ -97,12 +128,12 @@ struct DriveProfile: Codable, Equatable {
             }
         }
 
-        // 4. Time at each node.
+        // 5. Time at each node (departure from node i-1 waits out its dwell).
         var t = [Double](repeating: 0, count: n)
         for i in 1..<n {
             let ds = line.cumulative[i] - line.cumulative[i - 1]
             let avg = max(Self.crawlSpeed, (v[i - 1] + v[i]) / 2)
-            t[i] = t[i - 1] + ds / avg
+            t[i] = t[i - 1] + dwell[i - 1] + ds / avg
         }
 
         self.polyline = line
@@ -111,6 +142,36 @@ struct DriveProfile: Codable, Equatable {
         self.reference = reference
         self.policy = policy
         self.motion = motion
+        let hasStops = !keptStops.isEmpty
+        self.stops = hasStops ? keptStops : nil
+        self.nodeDwell = hasStops ? dwell : nil
+        self.nodeStopKind = hasStops ? stopKind : nil
+        self.speedKnots = speedKnots.isEmpty ? nil : speedKnots
+    }
+
+    private static func nearestNode(_ cumulative: [Double], _ d: Double) -> Int {
+        var lo = 0
+        var hi = cumulative.count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if cumulative[mid] <= d { lo = mid } else { hi = mid }
+        }
+        return (d - cumulative[lo]) <= (cumulative[hi] - d) ? lo : hi
+    }
+
+    /// Total seconds spent standing at lights and signs.
+    var totalStopTime: Double { stops?.totalDwell ?? 0 }
+
+    /// The same route, stops and drift re-solved for another speed policy.
+    func withPolicy(_ newPolicy: SpeedPolicy) -> DriveProfile {
+        DriveProfile(
+            route: polyline,
+            reference: reference,
+            policy: newPolicy,
+            motion: motion,
+            stops: stops ?? [],
+            speedKnots: speedKnots ?? []
+        )
     }
 
     /// Averages below this are treated as linear crawl (avoids divide-by-zero
@@ -144,11 +205,28 @@ struct DriveProfile: Codable, Equatable {
                 referenceSource: endRef.source
             )
         }
-        let dt = nodeTimes[i + 1] - nodeTimes[i]
+        let wait = nodeDwell?[i] ?? 0
+        let sinceNode = t - nodeTimes[i]
+        if wait > 0, sinceNode < wait {
+            // Standing at a red light / stop sign.
+            let d = polyline.cumulative[i]
+            let ref = reference.speed(atDistance: d)
+            return DriveState(
+                position: polyline.point(atDistance: d),
+                speed: 0,
+                heading: polyline.heading(atDistance: d),
+                distanceTravelled: d,
+                distanceRemaining: max(0, distance - d),
+                referenceSpeed: ref.value,
+                referenceSource: ref.source,
+                stoppedFor: nodeStopKind?[i] ?? .redLight
+            )
+        }
+        let dt = nodeTimes[i + 1] - nodeTimes[i] - wait
         let ds = polyline.cumulative[i + 1] - polyline.cumulative[i]
         let v0 = nodeSpeeds[i]
         let v1 = nodeSpeeds[i + 1]
-        let tau = min(max(0, t - nodeTimes[i]), dt)
+        let tau = min(max(0, sinceNode - wait), dt)
 
         let s: Double
         let speed: Double
@@ -186,12 +264,22 @@ struct DriveProfile: Codable, Equatable {
     ) -> DriveProfile? {
         let s = state(at: elapsed)
         guard let rest = polyline.suffix(fromDistance: s.distanceTravelled) else { return nil }
+        let travelled = s.distanceTravelled
+        // Stops still ahead keep their place; one we're standing at now is
+        // finished early (the car pulls away when resumed).
+        let aheadStops = (stops ?? []).compactMap { stop -> DriveStop? in
+            let d = stop.distance - travelled
+            return d > 1 ? DriveStop(distance: d, dwell: stop.dwell, kind: stop.kind) : nil
+        }
+        let aheadKnots = (speedKnots ?? []).map { SpeedKnot(distance: $0.distance - travelled, factor: $0.factor) }
         return DriveProfile(
             route: rest,
-            reference: reference.shifted(by: s.distanceTravelled),
+            reference: reference.shifted(by: travelled),
             policy: newPolicy ?? policy,
             motion: newMotion ?? motion,
-            initialSpeed: initialSpeed ?? s.speed
+            initialSpeed: initialSpeed ?? s.speed,
+            stops: aheadStops,
+            speedKnots: aheadKnots
         )
     }
 }

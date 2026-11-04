@@ -9,7 +9,7 @@ struct SpeedPolicyEditor: View {
     let referenceSource: SpeedReferenceSource?
 
     private enum Mode: String, CaseIterable, Identifiable {
-        case follow = "Limit", constant = "Constant", above = "Above", below = "Below"
+        case follow = "At Limit", above = "Faster", below = "Slower", constant = "Fixed"
         var id: String { rawValue }
     }
 
@@ -65,7 +65,7 @@ struct SpeedPolicyEditor: View {
 
             switch policy {
             case .followLimit:
-                Label("Matches the road's speed and slows for turns.", systemImage: "road.lanes")
+                Label("Drives at the usual speed for each road.", systemImage: "road.lanes")
                     .font(.subheadline)
             case .constant, .aboveLimit, .belowLimit:
                 VStack(alignment: .leading, spacing: 8) {
@@ -78,9 +78,7 @@ struct SpeedPolicyEditor: View {
                         Text(unit.label).foregroundStyle(.secondary)
                     }
                     Slider(value: displayValue, in: range, step: 1)
-                        .tint(RunsStyle.color(.setSpeed))
-                    Stepper("Fine-tune", value: displayValue, in: range, step: 1)
-                        .font(.caption)
+                        .tint(LocusTheme.accent)
                 }
                 .animation(.snappy, value: displayValue.wrappedValue)
             }
@@ -93,18 +91,18 @@ struct SpeedPolicyEditor: View {
 
     private var valueTitle: String {
         switch policy {
-        case .constant: return "Target speed"
-        case .aboveLimit: return "Above the limit by"
-        case .belowLimit: return "Below the limit by"
+        case .constant: return "Speed"
+        case .aboveLimit: return "Over the limit by"
+        case .belowLimit: return "Under the limit by"
         case .followLimit: return ""
         }
     }
 
     private var footer: String {
-        let source = referenceSource ?? .routeAverage
         if !policy.usesReference {
-            return "Holds this speed on straight road; still slows for sharp turns (if enabled) and stops at the destination."
+            return "Holds this speed where the road allows, still slowing for turns."
         }
-        return source.explanation
+        if referenceSource == .postedLimits { return "Follows posted speed limits." }
+        return "Apple Maps doesn't share posted limits, so Locus uses the route's typical speed."
     }
 }

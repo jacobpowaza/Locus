@@ -48,6 +48,38 @@ final class CoordinatorIntegrationTests: XCTestCase {
         }
     }
 
+    func testOneOffDriveRunsWithoutBeingSavedAndStopsAtLights() async throws {
+        let c = makeCoordinator()
+        var drive = ScheduledRun(name: "Drive to Work", actions: [
+            RunAction(.setLocation(home)),
+            RunAction(.driveTo(work, speed: nil)),
+        ])
+        drive.motion.realism = DriveRealism(redLights: true, maxRedLightWait: 30, stopSigns: true, varySpeed: true)
+
+        let error = await c.startOneOff(drive)
+        XCTAssertNil(error)
+        XCTAssertTrue(c.runs.isEmpty, "one-off drives aren't added to the runs list")
+        XCTAssertNotNil(c.executor)
+
+        // A second one can't start on top of it.
+        let second = await c.startOneOff(drive)
+        XCTAssertNotNil(second)
+
+        // Somewhere along the way the car stands still at a light or sign.
+        var sawStop = false
+        for _ in 0..<4000 {
+            await run(c, for: 1)
+            if c.snapshot()?.stoppedFor != nil {
+                sawStop = true
+                XCTAssertEqual(c.snapshot()?.speed, 0)
+            }
+            if c.executor == nil || c.executor?.state.status.isFinished == true { break }
+        }
+        XCTAssertTrue(sawStop)
+        XCTAssertEqual(c.history.first?.outcome, .completed)
+        XCTAssertEqual(c.history.first?.runName, "Drive to Work")
+    }
+
     func testScheduledRunFullLifecycle() async throws {
         let c = makeCoordinator()
         let r = commute()
