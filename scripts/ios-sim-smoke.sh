@@ -66,9 +66,9 @@ xcrun simctl terminate "$DEVICE_ID" "$BUNDLE_ID" || true
 sleep 3
 xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID"
 sleep 5
-xcrun simctl openurl "$DEVICE_ID" "locus://runs"
-sleep 3
-xcrun simctl io "$DEVICE_ID" screenshot "$OUT/03-dashboard-after-restart.png"
+xcrun simctl io "$DEVICE_ID" screenshot "$OUT/03-map-after-restart.png"
+# locus://runs is not exercised: iOS shows an "Open in Locus?" confirmation for
+# simctl openurl that this script can't tap. Check the deep link by hand.
 
 sleep 2
 kill $LOG_PID 2>/dev/null || true

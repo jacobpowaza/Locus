@@ -48,9 +48,10 @@ enabled:
 The smoke test builds for the Simulator, installs, launches with the
 DEBUG-only `-LocusDemoRun` argument (creates and starts a short run: set
 location → wait 10 s → ~1 km drive), takes screenshots, kills and relaunches
-the app mid-run (recovery path), opens `locus://runs`, and checks the app log
+the app mid-run (recovery path), and checks the app log
 for the expected `[Locus][Run]` / `[Locus][SimStub]` lines and for crash
-reports. Artifacts: `outputs/sim/` (screenshots, `app.log`, `xcodebuild.log`,
+reports. The `locus://runs` deep link isn't covered, because iOS asks to
+confirm `simctl openurl`. Artifacts: `outputs/sim/` (screenshots, `app.log`, `xcodebuild.log`,
 `.xcresult`, crashes) and `outputs/Locus-unsigned.ipa`.
 
 **Simulator caveat.** `Vendor/idevice/libidevice_ffi.a` contains only

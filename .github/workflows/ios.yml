@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-24.04
     container: swift:6.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Core tests
         run: swift test --parallel 2>&1 | tee core-tests.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: core-tests-linux
@@ -34,7 +34,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Select newest Xcode
         run: |
           XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
@@ -51,7 +51,7 @@ jobs:
         run: scripts/ios-sim-smoke.sh
       - name: Unsigned device IPA
         run: scripts/build-unsigned-ipa.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: ios-outputs

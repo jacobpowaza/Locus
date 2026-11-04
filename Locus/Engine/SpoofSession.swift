@@ -226,7 +226,7 @@ final class SpoofSession: ObservableObject {
             guard let self else { return }
             var previous = coordinates[0]
             await MainActor.run {
-                self.apply(previous, pairing: pairing, markRecent: true)
+                _ = self.apply(previous, pairing: pairing, markRecent: true)
             }
             for next in coordinates.dropFirst() {
                 if Task.isCancelled { break }
@@ -246,7 +246,7 @@ final class SpoofSession: ObservableObject {
                     let delay = stepMeters / speed
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     await MainActor.run {
-                        self.apply(coord, pairing: pairing, markRecent: false)
+                        _ = self.apply(coord, pairing: pairing, markRecent: false)
                     }
                 }
                 previous = next
