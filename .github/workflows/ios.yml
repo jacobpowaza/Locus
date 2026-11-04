@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v5
       - name: Core tests
         run: swift test --parallel 2>&1 | tee core-tests.log
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: core-tests-linux
@@ -51,7 +51,7 @@ jobs:
         run: scripts/ios-sim-smoke.sh
       - name: Unsigned device IPA
         run: scripts/build-unsigned-ipa.sh
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: ios-outputs
