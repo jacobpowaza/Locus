@@ -140,19 +140,115 @@ struct RunFormat {
     }
 }
 
+// MARK: - Controls that match the map tray (Teleport / Joy / Stop)
+
+/// Capsule button in the same vocabulary as the map's bottom tray:
+/// teal fill + black label for the main action, a faint fill for secondary
+/// ones, red for stop/end.
+struct LocusPillButtonStyle: ButtonStyle {
+    enum Role { case primary, secondary, danger }
+    var role: Role = .secondary
+    var expand = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillBody(configuration: configuration, role: role, expand: expand)
+    }
+
+    private struct PillBody: View {
+        let configuration: ButtonStyleConfiguration
+        let role: Role
+        let expand: Bool
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.subheadline.weight(role == .secondary ? .semibold : .bold))
+                .lineLimit(1)
+                .foregroundStyle(foreground)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: expand ? .infinity : nil)
+                .background(Capsule().fill(fill))
+                .contentShape(Capsule())
+                .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+        }
+
+        private var fill: Color {
+            switch role {
+            case .primary: return LocusTheme.accent
+            case .secondary: return Color.primary.opacity(0.08)
+            case .danger: return LocusTheme.danger
+            }
+        }
+
+        private var foreground: Color {
+            switch role {
+            case .primary: return .black
+            case .secondary: return .primary
+            case .danger: return .white
+            }
+        }
+    }
+}
+
+/// 44 pt round icon button, like the tray's settings / favorites buttons.
+struct LocusRoundButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        RoundBody(configuration: configuration)
+    }
+
+    private struct RoundBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color.primary.opacity(0.08)))
+                .contentShape(Circle())
+                .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
+                .scaleEffect(configuration.isPressed ? 0.94 : 1)
+                .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+        }
+    }
+}
+
+/// Selectable chip, like the travel-mode picker on the map.
+struct LocusChipStyle: ButtonStyle {
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .foregroundStyle(selected ? Color.black : Color.primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(selected ? LocusTheme.accent : Color.primary.opacity(0.08)))
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
 extension View {
-    /// Rounded card used by run tiles and action blocks.
-    func runCard(tint: Color? = nil, padding: CGFloat = 14) -> some View {
-        self
-            .padding(padding)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke((tint ?? .clear).opacity(0.35), lineWidth: 1)
-            )
+    /// System prominent button: Liquid Glass on iOS 26, bordered before.
+    @ViewBuilder
+    func locusProminentButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glassProminent).tint(LocusTheme.accent)
+        } else {
+            self.buttonStyle(.borderedProminent).tint(LocusTheme.accent)
+        }
+    }
+
+    /// Glass panel used for chrome floating over a map.
+    func runGlassPanel(cornerRadius: CGFloat = 20, tint: Color? = nil) -> some View {
+        locusGlass(.regular, tint: tint, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 

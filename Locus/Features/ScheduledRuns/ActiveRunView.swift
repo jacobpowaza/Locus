@@ -1,232 +1,347 @@
 import SwiftUI
 
-/// Live dashboard for the run in progress.
+/// Live run, laid out like the main map screen: the map fills the screen,
+/// with glass chrome on top and a glass control tray at the bottom.
 struct ActiveRunView: View {
     @EnvironmentObject private var runs: ScheduledRunsController
     @Environment(\.dismiss) private var dismiss
     @State private var confirmCancel = false
     @State private var showSpeed = false
+    @State private var showSteps = false
     @State private var speedDraft: SpeedPolicy = .followLimit
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let plan = runs.activePlan {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        if let s = runs.liveSnapshot() {
-                            content(plan: plan, s: s, now: context.date)
-                        } else {
-                            finished
-                        }
+        Group {
+            if let plan = runs.activePlan {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    if let s = runs.liveSnapshot() {
+                        content(plan: plan, s: s)
+                    } else {
+                        finished
                     }
-                } else {
-                    finished
+                }
+            } else {
+                finished
+            }
+        }
+        .confirmationDialog("End this run?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("End & Stay Here") { runs.cancel(stopSpoofing: false) }
+            Button("End & Stop Spoofing", role: .destructive) { runs.cancel(stopSpoofing: true) }
+        } message: {
+            Text("Staying keeps the simulated location where it is now.")
+        }
+        .sheet(isPresented: $showSpeed) { speedSheet }
+        .sheet(isPresented: $showSteps) { stepsSheet }
+    }
+
+    // MARK: Finished / empty
+
+    private var finished: some View {
+        NavigationStack {
+            ContentUnavailableView {
+                Label(runs.lastFinished?.outcome.label ?? "No active run", systemImage: "flag.checkered")
+            } description: {
+                if let r = runs.lastFinished {
+                    Text(r.message ?? "\(r.runName) finished. Locus stays at the last simulated location until you stop spoofing.")
                 }
             }
-            .navigationTitle(runs.activeRunName ?? "Run")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .confirmationDialog("End this run?", isPresented: $confirmCancel, titleVisibility: .visible) {
-                Button("End & Stay Here") { runs.cancel(stopSpoofing: false) }
-                Button("End & Stop Spoofing", role: .destructive) { runs.cancel(stopSpoofing: true) }
-            } message: {
-                Text("Staying keeps the simulated location where it is now.")
-            }
-            .sheet(isPresented: $showSpeed) {
-                NavigationStack {
-                    Form {
-                        SpeedPolicyEditor(policy: $speedDraft, unit: runs.unit, referenceSource: runs.snapshot?.referenceSource)
-                        Section {
-                            Text("Applies to the current drive and later drives until the next Set Speed step. Drives with their own custom speed keep it.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    .navigationTitle("Change Speed")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showSpeed = false } }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Apply") {
-                                runs.changeSpeed(speedDraft)
-                                showSpeed = false
-                            }
-                            .fontWeight(.semibold)
-                        }
-                    }
-                }
-                .presentationDetents([.medium])
-            }
         }
     }
 
-    private var finished: some View {
-        ContentUnavailableView {
-            Label(runs.lastFinished?.outcome.label ?? "No active run", systemImage: "flag.checkered")
-        } description: {
-            if let r = runs.lastFinished {
-                Text(r.message ?? "\(r.runName) finished. Locus stays at the last simulated location until you stop spoofing.")
-            }
-        }
-    }
+    // MARK: Live layout
 
-    @ViewBuilder
-    private func content(plan: RunPlan, s: ExecutionSnapshot, now: Date) -> some View {
+    private func content(plan: RunPlan, s: ExecutionSnapshot) -> some View {
         let fmt = RunFormat(unit: runs.unit)
         let tz = TimeZone(identifier: plan.timeZoneID) ?? .current
-        ScrollView {
-            VStack(spacing: 16) {
-                ZStack(alignment: .topLeading) {
-                    RoutePreviewMap(plan: plan, current: s.position, heading: s.speed > 0.5 ? s.heading : nil)
-                        .frame(height: 260)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    SimulatedBadge().padding(10)
+        return ZStack {
+            RoutePreviewMap(plan: plan, current: s.position, heading: s.speed > 0.5 ? s.heading : nil)
+                .ignoresSafeArea()
+
+            VStack(spacing: 10) {
+                topChrome(s, fmt: fmt)
+                Spacer(minLength: 0)
+                HStack {
+                    speedCluster(s, fmt: fmt)
+                    Spacer(minLength: 0)
                 }
+                tray(s, fmt: fmt, tz: tz)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .safeAreaPadding(.top, 8)
+        }
+        .animation(.snappy, value: s.status)
+        .animation(.snappy, value: s.connectionProblem)
+    }
 
-                statusBanner(s)
+    private func topChrome(_ s: ExecutionSnapshot, fmt: RunFormat) -> some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 48, height: 48)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .locusGlass(.interactive, in: Circle())
+                .foregroundStyle(.primary)
+                .accessibilityLabel("Close run dashboard")
 
-                // Primary readouts.
-                HStack(spacing: 12) {
-                    bigStat(fmt.speedNumber(s.speed), unit: runs.unit.label, label: "Simulated speed")
-                    if let ref = s.referenceSpeed {
-                        bigStat(fmt.speedNumber(ref), unit: runs.unit.label,
-                                label: (s.referenceSource?.isFallback ?? true) ? "Limit (est.)" : "Speed limit")
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(statusColor(s))
+                        .frame(width: 8, height: 8)
+                        .shadow(color: statusColor(s).opacity(0.7), radius: 4)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(runs.activeRunName ?? "Run")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(stepLine(s))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    if let leg = s.legDistanceRemaining, leg > 1 {
+                        Text(fmt.distance(leg))
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .contentTransition(.numericText())
                     }
                 }
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    stat(fmt.distance(s.legDistanceRemaining ?? 0), "Leg remaining")
-                    stat(s.legArrival.map { RunFormat.time($0, timeZone: tz) } ?? "—", "Leg ETA")
-                    stat(fmt.distance(s.distanceRemaining), "Run remaining")
-                    stat(RunFormat.time(s.runEnd, timeZone: tz), "Run ETA")
-                    stat(RunFormat.duration(s.activeElapsed), "Elapsed")
-                    stat(fmt.distance(s.distanceDriven), "Driven")
-                }
-
-                if let ends = s.holdEnds, case .waitUntil? = s.segment?.kind {
-                    Label("Holding until \(RunFormat.time(ends, timeZone: tz))", systemImage: "clock")
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .runCard()
-                } else if let ends = s.holdEnds {
-                    Label {
-                        Text("Waiting · ") + Text(ends, style: .timer) + Text(" left")
-                    } icon: { Image(systemName: "hourglass") }
-                        .font(.subheadline.monospacedDigit())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .runCard()
-                }
-
-                controls(s)
-
-                steps(plan: plan, s: s, tz: tz)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 48)
+                .runGlassPanel(cornerRadius: 18)
+                .accessibilityElement(children: .combine)
             }
-            .padding(16)
+
+            if let notice = notice(s) {
+                Label {
+                    Text(notice.text).foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: notice.icon).foregroundStyle(notice.color)
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .runGlassPanel(cornerRadius: 16, tint: notice.color.opacity(0.22))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    /// Floating speed readout, like a navigation app's speedometer.
+    private func speedCluster(_ s: ExecutionSnapshot, fmt: RunFormat) -> some View {
+        let estimated = s.referenceSource?.isFallback ?? true
+        return VStack(alignment: .leading, spacing: 6) {
+            SimulatedBadge()
+            HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(fmt.speedNumber(s.speed))
+                        .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                        .contentTransition(.numericText())
+                    Text(runs.unit.label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                if let ref = s.referenceSpeed {
+                    Divider().frame(height: 30)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(fmt.speedNumber(ref))
+                            .font(.headline.monospacedDigit())
+                        Text(estimated ? "Limit (est.)" : "Limit")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .runGlassPanel(cornerRadius: 20)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speedAccessibility(s, fmt: fmt, estimated: estimated))
+    }
+
+    private func tray(_ s: ExecutionSnapshot, fmt: RunFormat, tz: TimeZone) -> some View {
+        let trayShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        return VStack(spacing: 12) {
+            // Arrival summary; tap for the step list.
+            Button { showSteps = true } label: {
+                HStack(spacing: 0) {
+                    trayStat(RunFormat.time(s.runEnd, timeZone: tz), "arrival")
+                    trayStat(fmt.distance(s.distanceRemaining), "left")
+                    trayStat(RunFormat.duration(s.activeElapsed), "elapsed")
+                    Image(systemName: "chevron.up")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows every step")
+
+            if s.segmentCount > 0 {
+                ProgressView(value: Double(min(s.segmentIndex, s.segmentCount)), total: Double(s.segmentCount))
+                    .tint(LocusTheme.accent)
+                    .accessibilityLabel("Step \(min(s.segmentIndex + 1, s.segmentCount)) of \(s.segmentCount)")
+            }
+
+            if let ends = s.holdEnds {
+                holdLine(ends, s: s, tz: tz)
+            }
+
+            HStack(spacing: 10) {
+                if s.status == .paused {
+                    Button { runs.resume() } label: { Label("Resume", systemImage: "play.fill") }
+                        .buttonStyle(LocusPillButtonStyle(role: .primary, expand: true))
+                } else {
+                    Button { runs.pause() } label: { Label("Pause", systemImage: "pause.fill") }
+                        .buttonStyle(LocusPillButtonStyle(role: .primary, expand: true))
+                }
+                Button { runs.skip() } label: { Image(systemName: "forward.end.fill") }
+                    .buttonStyle(LocusRoundButtonStyle())
+                    .accessibilityLabel("Skip step")
+                Button {
+                    speedDraft = s.speedPolicy
+                    showSpeed = true
+                } label: { Image(systemName: "gauge.with.dots.needle.67percent") }
+                    .buttonStyle(LocusRoundButtonStyle())
+                    .accessibilityLabel("Change speed")
+                Button { confirmCancel = true } label: { Text("End") }
+                    .buttonStyle(LocusPillButtonStyle(role: .danger))
+                    .accessibilityLabel("End run")
+            }
+            .sensoryFeedback(.impact(weight: .light), trigger: s.status)
+        }
+        .padding(14)
+        .locusGlass(.regular, in: trayShape)
+        .contentShape(trayShape)
+    }
+
+    private func trayStat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 1) {
+            Text(value)
+                .font(.title3.weight(.bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private func statusBanner(_ s: ExecutionSnapshot) -> some View {
-        if s.status == .paused {
-            Label(s.pauseReason ?? "Paused", systemImage: "pause.circle.fill")
-                .font(.subheadline)
-                .foregroundStyle(LocusTheme.statusWarn)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .runCard(tint: LocusTheme.statusWarn)
-        } else if s.connectionProblem {
-            Label("Can't reach the spoofing tunnel — retrying. Check LocalDevVPN.", systemImage: "wifi.exclamationmark")
-                .font(.subheadline)
-                .foregroundStyle(LocusTheme.statusBad)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .runCard(tint: LocusTheme.statusBad)
-        } else if let seg = s.segment {
-            HStack {
-                Text("Step \(s.segmentIndex + 1) of \(s.segmentCount)")
-                    .font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                Text(seg.summary).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Spacer()
-            }
-        }
-    }
-
-    private func controls(_ s: ExecutionSnapshot) -> some View {
-        HStack(spacing: 10) {
-            if s.status == .paused {
-                controlButton("Resume", "play.fill", LocusTheme.accent, prominent: true) { runs.resume() }
+    private func holdLine(_ ends: Date, s: ExecutionSnapshot, tz: TimeZone) -> some View {
+        Group {
+            if case .waitUntil? = s.segment?.kind {
+                Label("Holding until \(RunFormat.time(ends, timeZone: tz))", systemImage: "clock")
             } else {
-                controlButton("Pause", "pause.fill", LocusTheme.accent, prominent: true) { runs.pause() }
+                Label {
+                    Text("Waiting · ") + Text(ends, style: .timer) + Text(" left")
+                } icon: { Image(systemName: "hourglass") }
             }
-            controlButton("Skip", "forward.end.fill", .secondary) { runs.skip() }
-            controlButton("Speed", "gauge.with.dots.needle.67percent", RunsStyle.color(.setSpeed)) {
-                speedDraft = s.speedPolicy
-                showSpeed = true
-            }
-            controlButton("End", "stop.fill", LocusTheme.danger) { confirmCancel = true }
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: s.status)
+        .font(.subheadline.weight(.semibold).monospacedDigit())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
     }
 
-    private func controlButton(_ title: String, _ icon: String, _ color: Color, prominent: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.headline)
-                Text(title).font(.caption.weight(.semibold))
-            }
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .foregroundStyle(prominent ? .black : color)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(prominent ? color : color.opacity(0.14))
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-    }
+    // MARK: Sheets
 
-    private func steps(plan: RunPlan, s: ExecutionSnapshot, tz: TimeZone) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Steps").font(.headline)
-            VStack(spacing: 10) {
-                ForEach(plan.segments.indices, id: \.self) { i in
-                    let projIndex = i - s.segmentIndex
-                    TimelineRow(
-                        segment: plan.segments[i],
-                        projected: projIndex >= 0 && projIndex < s.projected.count ? s.projected[projIndex] : nil,
-                        timeZone: tz,
-                        unit: runs.unit,
-                        phase: i < s.segmentIndex ? .done : (i == s.segmentIndex ? .current : .upcoming)
-                    )
+    private var speedSheet: some View {
+        NavigationStack {
+            Form {
+                SpeedPolicyEditor(policy: $speedDraft, unit: runs.unit, referenceSource: runs.snapshot?.referenceSource)
+                Section {
+                    Text("Applies to the current drive and later drives until the next Set Speed step. Drives with their own custom speed keep it.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .runCard()
-        }
-    }
-
-    private func bigStat(_ value: String, unit: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value)
-                    .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-                    .contentTransition(.numericText())
-                Text(unit).font(.subheadline).foregroundStyle(.secondary)
+            .navigationTitle("Change Speed")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showSpeed = false } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        runs.changeSpeed(speedDraft)
+                        showSpeed = false
+                    }
+                    .fontWeight(.semibold)
+                }
             }
-            Text(label).font(.caption).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .runCard()
-        .accessibilityElement(children: .combine)
+        .presentationDetents([.medium, .large])
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.headline.monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7)
-            Text(label).font(.caption).foregroundStyle(.secondary)
+    private var stepsSheet: some View {
+        NavigationStack {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                if let plan = runs.activePlan, let s = runs.liveSnapshot() {
+                    let tz = TimeZone(identifier: plan.timeZoneID) ?? .current
+                    List {
+                        ForEach(plan.segments.indices, id: \.self) { i in
+                            let projIndex = i - s.segmentIndex
+                            TimelineRow(
+                                segment: plan.segments[i],
+                                projected: projIndex >= 0 && projIndex < s.projected.count ? s.projected[projIndex] : nil,
+                                timeZone: tz,
+                                unit: runs.unit,
+                                phase: i < s.segmentIndex ? .done : (i == s.segmentIndex ? .current : .upcoming)
+                            )
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("No active run", systemImage: "flag.checkered")
+                }
+            }
+            .navigationTitle("Steps")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { showSteps = false } }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .runCard(padding: 12)
-        .accessibilityElement(children: .combine)
+        .presentationDetents([.medium, .large])
+    }
+
+    // MARK: Text
+
+    private func statusColor(_ s: ExecutionSnapshot) -> Color {
+        if s.status == .paused { return LocusTheme.statusWarn }
+        if s.connectionProblem { return LocusTheme.statusBad }
+        return LocusTheme.statusGood
+    }
+
+    private func stepLine(_ s: ExecutionSnapshot) -> String {
+        guard let seg = s.segment else { return "" }
+        return "Step \(s.segmentIndex + 1) of \(s.segmentCount) · \(seg.summary)"
+    }
+
+    private func notice(_ s: ExecutionSnapshot) -> (text: String, icon: String, color: Color)? {
+        if s.status == .paused {
+            return (s.pauseReason ?? "Paused", "pause.circle.fill", LocusTheme.statusWarn)
+        }
+        if s.connectionProblem {
+            return ("Can't reach the spoofing tunnel — retrying. Check LocalDevVPN.", "wifi.exclamationmark", LocusTheme.statusBad)
+        }
+        return nil
+    }
+
+    private func speedAccessibility(_ s: ExecutionSnapshot, fmt: RunFormat, estimated: Bool) -> String {
+        var text = "Simulated speed \(fmt.speed(s.speed))"
+        if let ref = s.referenceSpeed {
+            text += estimated ? ", estimated limit \(fmt.speed(ref))" : ", speed limit \(fmt.speed(ref))"
+        }
+        return text
     }
 }
 

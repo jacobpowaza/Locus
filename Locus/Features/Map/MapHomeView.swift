@@ -153,11 +153,12 @@ struct MapHomeView: View {
                 importGPX(url)
             }
         }
-        .sheet(isPresented: $showActiveRun) {
+        .fullScreenCover(isPresented: $showActiveRun) {
             ActiveRunView()
         }
         .sheet(isPresented: $showScheduledRuns) {
             ScheduledRunsView()
+                .presentationDetents([.medium, .large])
         }
         .animation(.snappy, value: scheduledRuns.isActive)
         .sheet(isPresented: $showRouteSheet) {

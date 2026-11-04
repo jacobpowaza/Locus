@@ -82,8 +82,7 @@ struct RunEditorView: View {
                         Label("Save & Run Now", systemImage: "play.fill")
                             .font(.headline)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.accent)
+                    .locusProminentButton()
                     .disabled(issues.hasErrors || runs.isActive || preview?.error != nil)
                 }
             }

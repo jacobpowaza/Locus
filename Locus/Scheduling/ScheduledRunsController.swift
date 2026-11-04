@@ -86,6 +86,12 @@ final class ScheduledRunsController: ObservableObject {
             errorMessage = coordinator.storageProblems.joined(separator: "\n")
         }
         #if DEBUG
+        // Test hook (scripts/ios-sim-smoke.sh): open the Scheduled Runs sheet.
+        if ProcessInfo.processInfo.arguments.contains("-LocusShowRuns") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                NotificationCenter.default.post(name: .locusOpenScheduledRuns, object: nil)
+            }
+        }
         if ProcessInfo.processInfo.arguments.contains("-LocusDemoRun") {
             startDemoRun(near: session.simulated ?? session.realCoordinate)
             return

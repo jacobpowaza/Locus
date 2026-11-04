@@ -25,93 +25,82 @@ struct ScheduledRunsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if runs.snapshot != nil, let name = runs.activeRunName {
+            List {
+                if runs.snapshot != nil, let name = runs.activeRunName {
+                    Section {
                         ActiveRunCard(name: name) { showActive = true }
-                    } else if let starting = runs.startingRunID, let r = runs.run(id: starting) {
-                        startingCard(r)
                     }
+                } else if let starting = runs.startingRunID, let r = runs.run(id: starting) {
+                    Section { startingRow(r) }
+                }
 
-                    if let done = runs.lastFinished {
-                        finishedCard(done)
+                if let done = runs.lastFinished {
+                    Section { finishedRow(done) }
+                }
+
+                if runs.runs.isEmpty {
+                    Section { emptyState }
+                } else {
+                    Section("My Runs") {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                            ForEach(runs.runs) { run in
+                                RunTile(
+                                    run: run,
+                                    next: runs.nextOccurrence(of: run),
+                                    isRunning: runs.isActive && runs.activeRunID == run.id,
+                                    isStarting: runs.startingRunID == run.id,
+                                    onRun: { runs.start(run.id) },
+                                    onEdit: { editing = EditorTarget(run: run, isNew: false) }
+                                )
+                                .contextMenu { tileMenu(run) }
+                            }
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                     }
+                }
 
-                    if runs.runs.isEmpty {
-                        emptyState
-                    } else {
-                        section("My Runs") {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 12)], spacing: 12) {
-                                ForEach(runs.runs) { run in
-                                    RunTile(
-                                        run: run,
-                                        next: runs.nextOccurrence(of: run),
-                                        isRunning: runs.isActive && runs.activeRunID == run.id,
-                                        isStarting: runs.startingRunID == run.id,
-                                        onRun: { runs.start(run.id) },
-                                        onEdit: { editing = EditorTarget(run: run, isNew: false) }
-                                    )
-                                    .contextMenu {
-                                        Button { runs.start(run.id) } label: { Label("Run Now", systemImage: "play.fill") }
-                                            .disabled(runs.isActive)
-                                        Button { editing = EditorTarget(run: run, isNew: false) } label: { Label("Edit", systemImage: "pencil") }
-                                        Button { runs.duplicate(run.id) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                                        if run.schedule.isAutomatic {
-                                            Button { runs.setEnabled(!run.isEnabled, id: run.id) } label: {
-                                                Label(run.isEnabled ? "Turn Off Schedule" : "Turn On Schedule",
-                                                      systemImage: run.isEnabled ? "bell.slash" : "bell")
-                                            }
-                                        }
-                                        Button(role: .destructive) { pendingDelete = run } label: { Label("Delete", systemImage: "trash") }
-                                    }
+                if !upcoming.isEmpty {
+                    Section("Upcoming") {
+                        ForEach(Array(upcoming.prefix(6).enumerated()), id: \.offset) { _, item in
+                            HStack(spacing: 12) {
+                                Circle().fill(RunsStyle.tint(item.run.tint)).frame(width: 10, height: 10)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.run.name).font(.subheadline.weight(.semibold))
+                                    Text(RunFormat.dayAndTime(item.date, timeZone: item.run.timeZone))
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
+                                Spacer()
+                                Text(item.date, style: .relative)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
+                }
 
-                    if !upcoming.isEmpty {
-                        section("Upcoming") {
-                            VStack(spacing: 0) {
-                                ForEach(Array(upcoming.prefix(6).enumerated()), id: \.offset) { i, item in
-                                    HStack(spacing: 12) {
-                                        Circle().fill(RunsStyle.tint(item.run.tint)).frame(width: 10, height: 10)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(item.run.name).font(.subheadline.weight(.semibold))
-                                            Text(RunFormat.dayAndTime(item.date, timeZone: item.run.timeZone))
-                                                .font(.caption).foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
-                                        Text(item.date, style: .relative)
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.vertical, 10)
-                                    if i < min(upcoming.count, 6) - 1 { Divider() }
-                                }
-                            }
-                            .runCard()
-                        }
-                    }
-
-                    if let last = runs.history.first {
-                        section("Recent") {
-                            Button { showHistory = true } label: {
+                if let last = runs.history.first {
+                    Section("Recent") {
+                        Button { showHistory = true } label: {
+                            HStack {
                                 HistoryRow(record: last, unit: runs.unit)
-                                    .runCard()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .foregroundStyle(.primary)
                     }
+                }
 
+                Section {
                     Button { showHowItWorks = true } label: {
                         Label("How scheduling works on iPhone", systemImage: "info.circle")
-                            .font(.footnote)
                     }
-                    .padding(.top, 4)
+                    .tint(LocusTheme.accent)
                 }
-                .padding(16)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle("Scheduled Runs")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -138,7 +127,7 @@ struct ScheduledRunsView: View {
             .sheet(item: $editing) { target in
                 RunEditorView(original: target.run, isNew: target.isNew)
             }
-            .sheet(isPresented: $showActive) {
+            .fullScreenCover(isPresented: $showActive) {
                 ActiveRunView()
             }
             .sheet(isPresented: $showHistory) {
@@ -166,12 +155,19 @@ struct ScheduledRunsView: View {
         }
     }
 
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.title3.weight(.bold))
-            content()
+    @ViewBuilder
+    private func tileMenu(_ run: ScheduledRun) -> some View {
+        Button { runs.start(run.id) } label: { Label("Run Now", systemImage: "play.fill") }
+            .disabled(runs.isActive)
+        Button { editing = EditorTarget(run: run, isNew: false) } label: { Label("Edit", systemImage: "pencil") }
+        Button { runs.duplicate(run.id) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+        if run.schedule.isAutomatic {
+            Button { runs.setEnabled(!run.isEnabled, id: run.id) } label: {
+                Label(run.isEnabled ? "Turn Off Schedule" : "Turn On Schedule",
+                      systemImage: run.isEnabled ? "bell.slash" : "bell")
+            }
         }
+        Button(role: .destructive) { pendingDelete = run } label: { Label("Delete", systemImage: "trash") }
     }
 
     private var emptyState: some View {
@@ -185,28 +181,26 @@ struct ScheduledRunsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            HStack {
+            HStack(spacing: 10) {
                 Button {
                     editing = EditorTarget(run: blankRun(), isNew: true)
                 } label: {
                     Label("New Run", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(LocusPillButtonStyle(role: .primary))
                 Button {
                     editing = EditorTarget(run: commuteExample(), isNew: true)
                 } label: {
                     Label("Try the commute", systemImage: "car")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(LocusPillButtonStyle(role: .secondary))
             }
-            .tint(LocusTheme.accent)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .runCard()
+        .padding(.vertical, 20)
     }
 
-    private func startingCard(_ r: ScheduledRun) -> some View {
+    private func startingRow(_ r: ScheduledRun) -> some View {
         HStack(spacing: 12) {
             ProgressView()
             VStack(alignment: .leading) {
@@ -215,10 +209,9 @@ struct ScheduledRunsView: View {
             }
             Spacer()
         }
-        .runCard(tint: RunsStyle.tint(r.tint))
     }
 
-    private func finishedCard(_ record: RunRecord) -> some View {
+    private func finishedRow(_ record: RunRecord) -> some View {
         HStack(spacing: 12) {
             Image(systemName: record.outcome == .completed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.title2)
@@ -236,10 +229,9 @@ struct ScheduledRunsView: View {
             } label: {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .accessibilityLabel("Dismiss")
         }
-        .runCard()
     }
 
     private func blankRun() -> ScheduledRun {
@@ -310,14 +302,13 @@ struct RunTile: View {
             }
             .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
             .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(tint.gradient)
-                    .opacity(run.schedule.isAutomatic && !run.isEnabled ? 0.45 : 1)
-            )
+            .locusGlass(.interactive, tint: tint.opacity(isOff ? 0.35 : 0.85),
+                        in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
         .buttonStyle(.plain)
     }
+
+    private var isOff: Bool { run.schedule.isAutomatic && !run.isEnabled }
 
     private var subtitle: String {
         let steps = "\(run.actions.count) step\(run.actions.count == 1 ? "" : "s")"
@@ -361,8 +352,8 @@ struct ActiveRunCard: View {
                             .tint(LocusTheme.accent)
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .runCard(tint: LocusTheme.accent)
         }
         .buttonStyle(.plain)
     }

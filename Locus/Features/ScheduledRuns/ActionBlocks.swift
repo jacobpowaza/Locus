@@ -15,27 +15,17 @@ struct ActionBlockRow: View {
     private var color: Color { RunsStyle.color(category) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(spacing: 0) {
-                Text(startTime.map { RunFormat.time($0, timeZone: timeZone) } ?? "\(number)")
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 52)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Rectangle()
-                    .fill(color.opacity(0.35))
-                    .frame(width: 2)
-                    .frame(maxHeight: .infinity)
-                    .opacity(isLast ? 0 : 1)
-            }
-            .padding(.top, 14)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
-                    ActionGlyph(category: category, size: 30)
+        HStack(alignment: .top, spacing: 12) {
+            ActionGlyph(category: category, size: 32)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     sentence
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
+                    Text(startTime.map { RunFormat.time($0, timeZone: timeZone) } ?? "#\(number)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 if let detail {
                     Text(detail)
@@ -44,17 +34,8 @@ struct ActionBlockRow: View {
                 }
                 ForEach(issues) { IssueLabel(issue: $0) }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(color.opacity(0.10))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(issues.hasErrors ? LocusTheme.danger : color.opacity(0.25), lineWidth: issues.hasErrors ? 1.5 : 1)
-            )
         }
+        .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Step \(number): \(accessibilitySentence)")
         .accessibilityHint("Double-tap to edit")
@@ -148,30 +129,33 @@ struct AddActionSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    ForEach(options.indices, id: \.self) { i in
-                        let category = options[i].0
-                        let kind = options[i].1
-                        Button {
-                            onPick(kind)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ActionGlyph(category: category, size: 36)
-                                Text(RunsStyle.title(category)).font(.headline).foregroundStyle(.primary)
-                                Text(RunsStyle.blurb(category)).font(.caption).foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.leading)
+            List {
+                ForEach(options.indices, id: \.self) { i in
+                    let category = options[i].0
+                    let kind = options[i].1
+                    Button {
+                        onPick(kind)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            ActionGlyph(category: category, size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(RunsStyle.title(category))
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text(RunsStyle.blurb(category))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
-                            .runCard(tint: RunsStyle.color(category), padding: 12)
+                            Spacer(minLength: 0)
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(RunsStyle.color(category))
                         }
-                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                     }
                 }
-                .padding(16)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Add Action")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -319,8 +303,7 @@ struct DurationEditor: View {
                 HStack {
                     ForEach([60.0, 300, 900, 1800, 3600, 7200], id: \.self) { preset in
                         Button(RunFormat.duration(preset)) { seconds = preset }
-                            .buttonStyle(.bordered)
-                            .tint(seconds == preset ? LocusTheme.accent : .secondary)
+                            .buttonStyle(LocusChipStyle(selected: seconds == preset))
                     }
                 }
             }
