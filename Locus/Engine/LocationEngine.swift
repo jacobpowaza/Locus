@@ -12,7 +12,6 @@ enum LocationEngineError: LocalizedError {
     case simulationCreate
     case locationSet
     case locationClear
-    case notActive
 
     var errorDescription: String? {
         switch self {
@@ -24,7 +23,6 @@ enum LocationEngineError: LocalizedError {
         case .simulationCreate: return "Could not open Apple’s location simulation service."
         case .locationSet: return "Failed to set simulated coordinates."
         case .locationClear: return "Failed to clear simulated location."
-        case .notActive: return "No active simulation session."
         }
     }
 
@@ -172,9 +170,8 @@ enum LocationEngine {
             cleanup()
             return simulationCreate
         }
-        // location_simulation_new consumes/owns remote server lifecycle alongside handle
-        remoteServer = nil
-
+        // The location channel borrows the remote server. Keep it alive
+        // until cleanup frees the channel, then the server.
         return ok
     }
 

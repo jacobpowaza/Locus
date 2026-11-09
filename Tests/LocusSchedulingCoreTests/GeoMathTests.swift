@@ -82,3 +82,28 @@ final class GeoMathTests: XCTestCase {
         XCTAssertNil(line.suffix(fromDistance: 199.5))
     }
 }
+
+final class DestinationQueryTests: XCTestCase {
+    private let point = GeoPoint(latitude: 37.3318, longitude: -122.0312)
+
+    func testCoordinateInputAndMapLinks() {
+        XCTAssertEqual(DestinationQuery(" 37.3318, -122.0312 "), .coordinates(point, name: nil))
+        XCTAssertEqual(DestinationQuery("geo:37.3318,-122.0312"), .coordinates(point, name: nil))
+        XCTAssertEqual(DestinationQuery("https://maps.apple.com/?ll=37.3318,-122.0312&q=Apple%20Park"),
+                       .coordinates(point, name: "Apple Park"))
+        XCTAssertEqual(DestinationQuery("https://maps.apple.com/place?place-id=Example&coordinate=37.3318,-122.0312"),
+                       .applePlaceID("Example", fallback: point))
+        XCTAssertEqual(DestinationQuery("https://www.google.com/maps/place/Apple+Park/@1,2,16z/data=!3d37.3318!4d-122.0312"),
+                       .coordinates(point, name: nil))
+        XCTAssertEqual(DestinationQuery("https://www.google.com/maps/dir/?api=1&destination=Apple%20Park"), .text("Apple Park"))
+    }
+
+    func testOnlyRecognizedMapURLsAreParsed() {
+        XCTAssertEqual(DestinationQuery("1 Infinite Loop"), .text("1 Infinite Loop"))
+        XCTAssertEqual(DestinationQuery("91,181"), .text("91,181"))
+        XCTAssertEqual(DestinationQuery("https://maps.apple.com.example.org/?ll=37.3318,-122.0312"), .unsupportedLink)
+        XCTAssertEqual(DestinationQuery("http://maps.app.goo.gl/abc"), .unsupportedLink)
+        XCTAssertEqual(DestinationQuery("https://maps.app.goo.gl/abc"),
+                       .shortGoogleLink(URL(string: "https://maps.app.goo.gl/abc")!))
+    }
+}

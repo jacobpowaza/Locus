@@ -214,17 +214,37 @@ final class ExecutorTests: XCTestCase {
     func testSinkFailurePausesAfterGraceAndRecovers() async throws {
         let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: nil)])
         let ex = start(run, plan)
+        let before = ex.desiredPosition?.point
         sink.failing = true
         tick(ex, seconds: 10)
+        XCTAssertEqual(ex.desiredPosition?.point, before)
         XCTAssertEqual(ex.state.status, .running)
         XCTAssertTrue(ex.snapshot(wallNow: clock.now).connectionProblem)
         tick(ex, seconds: 25)
         XCTAssertEqual(ex.state.status, .paused)
-        XCTAssertTrue(ex.state.pauseReason?.contains("LocalDevVPN") == true)
+        XCTAssertTrue(ex.state.pauseReason?.contains("Check Settings") == true)
         sink.failing = false
         ex.resume(wallNow: clock.now, monotonic: clock.monotonic)
         tick(ex, seconds: 2)
         XCTAssertFalse(ex.snapshot(wallNow: clock.now).connectionProblem)
+    }
+
+    func testStopPendingAtRestartDoesNotResumeMotion() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: nil)])
+        let ex = start(run, plan)
+        tick(ex, seconds: 10)
+        sink.pending = true
+        ex.cancel(stopSpoofing: true, wallNow: clock.now)
+        XCTAssertEqual(ex.state.stopPending, true)
+        let restored = RunExecutor(state: ex.state, sink: sink)
+        restored.recoverAfterRestart(wallNow: clock.now, monotonic: clock.monotonic)
+        sink.pending = false
+        tick(restored, seconds: 3)
+        XCTAssertEqual(restored.state.status, .paused)
+        XCTAssertNotEqual(sink.calls.last, .stop)
+        restored.resume(wallNow: clock.now, monotonic: clock.monotonic)
+        XCTAssertEqual(restored.state.status, .cancelled)
+        XCTAssertEqual(sink.calls.last, .stop)
     }
 
     func testRecoveryAfterRestartPreservesConfirmedCheckpoint() async throws {

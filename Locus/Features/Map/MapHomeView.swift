@@ -5,6 +5,7 @@ import SwiftUI
 /// controls, and one glass panel at the bottom that holds search, the
 /// selected place, and what Locus is doing right now.
 struct MapHomeView: View {
+    @EnvironmentObject private var appDelegate: LocusAppDelegate
     @EnvironmentObject private var session: SpoofSession
     @EnvironmentObject private var pairing: PairingStore
     @EnvironmentObject private var runs: ScheduledRunsController
@@ -28,6 +29,7 @@ struct MapHomeView: View {
     @State private var showSettings = false
     @State private var showPlaces = false
     @State private var showScheduledRuns = false
+    @State private var reminderRunID: UUID?
     @State private var showActiveRun = false
     @State private var drivePlace: MapPlace?
     @State private var walkingTo: UUID?
@@ -60,6 +62,94 @@ struct MapHomeView: View {
     private var here: CLLocationCoordinate2D? { session.simulated ?? session.realCoordinate }
 
     var body: some View {
+        mapLayout
+            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: isSearching)
+            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: selected)
+            .animation(.snappy, value: session.joystickActive)
+            .animation(.snappy, value: runs.isActive)
+            .onAppear {
+                session.startLocationUpdates()
+                search.near = here
+            }
+            .onChange(of: searchText) { _, value in
+                searchTask?.cancel()
+                resolvingSearch = false
+                search.near = here
+                search.query = value
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .locusOpenScheduledRuns)) { _ in
+                showScheduledRuns = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .locusOpenActiveRun)) { _ in
+                navigationRequested = true
+            }
+            .task(id: navigationRequested && drivePlace == nil && !showRoutes) {
+                guard navigationRequested, drivePlace == nil, !showRoutes else { return }
+                // Let the planner sheet finish dismissing before presenting navigation.
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                showActiveRun = true
+                navigationRequested = false
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
+                guard let url = note.object as? URL else { return }
+                importGPX(url)
+            }
+            .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showPlaces) {
+                PlacesView { place in
+                    showPlaces = false
+                    show(place)
+                }
+            }
+            .onChange(of: appDelegate.reminderRunID, initial: true) { _, id in
+                guard let id else { return }
+                reminderRunID = id
+                showScheduledRuns = true
+                appDelegate.reminderRunID = nil
+            }
+            .sheet(isPresented: $showScheduledRuns, onDismiss: { reminderRunID = nil }) {
+                ScheduledRunsView(reminderRunID: reminderRunID)
+            }
+            .sheet(isPresented: $showRoutes, onDismiss: {
+                if showNewRoute {
+                    showNewRoute = false
+                    searchFocused = true
+                }
+            }) {
+                SavedRoutesView { showNewRoute = true }
+            }
+            .sheet(item: $scheduledDraft) { draft in
+                RunEditorView(original: draft, isNew: true)
+            }
+            .sheet(item: $drivePlace) { place in
+                DriveOptionsSheet(destination: place, origin: tripOrigin, stops: pendingStops, prefs: runs.drivePrefs) {
+                    pendingStops.removeAll()
+                    drivePlace = nil
+                    selected = nil
+                }
+            }
+            .fullScreenCover(isPresented: $showActiveRun) {
+                ActiveRunView()
+            }
+            .confirmationDialog("Turn off Locus?", isPresented: $confirmTurnOff, titleVisibility: .visible) {
+                Button("End and Turn Off", role: .destructive) {
+                    runs.turnOffLocus(session: session, pairing: pairing)
+                }
+            } message: {
+                Text("Locus will end \"\(runs.activeRunName ?? "the run")\" and clear the simulated location when connected.")
+            }
+            .sensoryFeedback(.success, trigger: session.isSpoofing) { _, active in active }
+            .alert("Follow this route?", isPresented: Binding(get: { !importedRoute.isEmpty }, set: { if !$0 { importedRoute = [] } })) {
+                Button("Walk It") { followImported(.walk) }
+                Button("Drive It") { followImported(.drive) }
+                Button("Cancel", role: .cancel) { importedRoute = [] }
+            } message: {
+                Text("Locus will move along the imported GPX track.")
+            }
+    }
+
+    private var mapLayout: some View {
         ZStack(alignment: .top) {
             map
 
@@ -78,7 +168,6 @@ struct MapHomeView: View {
                     search: search,
                     selected: $selected,
                     expanded: $panelExpanded,
-                    resolvingSearch: resolvingSearch,
                     walkingTo: walkingTo,
                     here: here,
                     onPickCompletion: select(completion:),
@@ -103,84 +192,6 @@ struct MapHomeView: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: isSearching)
-        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: selected)
-        .animation(.snappy, value: session.joystickActive)
-        .animation(.snappy, value: runs.isActive)
-        .onAppear {
-            session.startLocationUpdates()
-            search.near = here
-        }
-        .onChange(of: searchText) { _, value in
-            searchTask?.cancel()
-            resolvingSearch = false
-            search.near = here
-            search.query = value
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .locusOpenScheduledRuns)) { _ in
-            showScheduledRuns = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .locusOpenActiveRun)) { _ in
-            navigationRequested = true
-        }
-        .task(id: navigationRequested && drivePlace == nil && !showRoutes) {
-            guard navigationRequested, drivePlace == nil, !showRoutes else { return }
-            // Let the planner sheet finish dismissing before presenting navigation.
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            showActiveRun = true
-            navigationRequested = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
-            guard let url = note.object as? URL else { return }
-            importGPX(url)
-        }
-        .sheet(isPresented: $showSettings) { SettingsView() }
-        .sheet(isPresented: $showPlaces) {
-            PlacesView { place in
-                showPlaces = false
-                show(place)
-            }
-        }
-        .sheet(isPresented: $showScheduledRuns) {
-            ScheduledRunsView()
-        }
-        .sheet(isPresented: $showRoutes, onDismiss: {
-            if showNewRoute {
-                showNewRoute = false
-                searchFocused = true
-            }
-        }) {
-            SavedRoutesView { showNewRoute = true }
-        }
-        .sheet(item: $scheduledDraft) { draft in
-            RunEditorView(original: draft, isNew: true)
-        }
-        .sheet(item: $drivePlace) { place in
-            DriveOptionsSheet(destination: place, origin: tripOrigin, stops: pendingStops, prefs: runs.drivePrefs) {
-                pendingStops.removeAll()
-                drivePlace = nil
-                selected = nil
-            }
-        }
-        .fullScreenCover(isPresented: $showActiveRun) {
-            ActiveRunView()
-        }
-        .confirmationDialog("Turn off Locus?", isPresented: $confirmTurnOff, titleVisibility: .visible) {
-            Button("End and Turn Off", role: .destructive) {
-                runs.turnOffLocus(session: session, pairing: pairing)
-            }
-        } message: {
-            Text("This ends \"\(runs.activeRunName ?? "the run")\" and your iPhone goes back to its real location.")
-        }
-        .sensoryFeedback(.success, trigger: session.isSpoofing)
-        .alert("Follow this route?", isPresented: Binding(get: { !importedRoute.isEmpty }, set: { if !$0 { importedRoute = [] } })) {
-            Button("Walk It") { followImported(.walk) }
-            Button("Drive It") { followImported(.drive) }
-            Button("Cancel", role: .cancel) { importedRoute = [] }
-        } message: {
-            Text("Locus will move along the imported GPX track.")
-        }
     }
 
     // MARK: Map
@@ -188,7 +199,7 @@ struct MapHomeView: View {
     private var map: some View {
         MapReader { proxy in
             Map(position: $position) {
-                if session.simulated == nil {
+                if session.simulated == nil && !session.needsClear {
                     UserAnnotation()
                 } else if let real = session.realCoordinate {
                     Marker("Last actual location", systemImage: "location", coordinate: real)
@@ -473,6 +484,7 @@ struct MapHomeView: View {
     }
 
     private func teleport(_ place: MapPlace) {
+        walkingTo = nil
         let name = place.kind == .droppedPin && place.name == "Dropped Pin" ? nil : place.name
         Task {
             if await session.teleport(to: place.coordinate, name: name, pairing: pairing), selected?.id == place.id {
@@ -486,16 +498,19 @@ struct MapHomeView: View {
             session.lastError = "Locus can't find your location yet. Teleport somewhere first, then walk from there."
             return
         }
+        let runAtRequest = runs.activeRunID
         walkingTo = place.id
         Task {
+            defer { if walkingTo == place.id { walkingTo = nil } }
             do {
                 let coords = try await RouteBuilder.roadRoute(from: start, to: place.coordinate, mode: .walk)
-                walkingTo = nil
+                guard selected?.id == place.id, walkingTo == place.id, runs.activeRunID == runAtRequest else { return }
                 selected = nil
                 session.followRoute(coords, mode: .walk, destinationName: place.name, pairing: pairing)
             } catch {
-                walkingTo = nil
-                session.lastError = "Couldn't find a walking route to \(place.name)."
+                if selected?.id == place.id {
+                    session.lastError = "Couldn’t find a walking route to \(place.name)."
+                }
             }
         }
     }
@@ -507,7 +522,7 @@ struct MapHomeView: View {
             if let c = here {
                 position = .region(MKCoordinateRegion(center: c, latitudinalMeters: 900, longitudinalMeters: 900))
             } else {
-                position = .userLocation(fallback: .automatic)
+                position = session.needsClear ? .automatic : .userLocation(fallback: .automatic)
             }
         }
     }

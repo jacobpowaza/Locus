@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Dashboard: active run, your runs, upcoming schedule, history.
 struct ScheduledRunsView: View {
+    var reminderRunID: UUID?
     @EnvironmentObject private var runs: ScheduledRunsController
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.dismiss) private var dismiss
@@ -21,6 +22,14 @@ struct ScheduledRunsView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let reminderRunID, let run = runs.run(id: reminderRunID), !runs.isBusy,
+                   let record = runs.history.first(where: { $0.runID == reminderRunID }), record.outcome == .missed {
+                    Section("Scheduled Reminder") {
+                        Text(run.name).font(.headline)
+                        Text(record.message ?? "The scheduled time passed.").foregroundStyle(.secondary)
+                        Button("Start Now") { runs.start(run.id) }
+                    }
+                }
                 if runs.snapshot != nil, let name = runs.activeRunName {
                     Section {
                         ActiveRunCard(name: name) { showActive = true }
@@ -55,6 +64,23 @@ struct ScheduledRunsView: View {
                     }
                 }
 
+                if !runs.templates.isEmpty {
+                    Section("Templates") {
+                        ForEach(runs.templates) { template in
+                            Button {
+                                var run = template.copyForEditing(name: template.name)
+                                run.isTemplate = nil
+                                run.isEnabled = true
+                                editing = EditorTarget(run: run, isNew: true)
+                            } label: {
+                                Label(template.name, systemImage: "square.on.square")
+                            }
+                            .swipeActions {
+                                Button("Delete", role: .destructive) { pendingDelete = template }
+                            }
+                        }
+                    }
+                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Automated Runs")
@@ -124,6 +150,15 @@ struct ScheduledRunsView: View {
             .disabled(runs.isActive)
         Button { editing = EditorTarget(run: run, isNew: false) } label: { Label("Edit", systemImage: "pencil") }
         Button { runs.duplicate(run.id) } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+        Button {
+            var template = run.copyForEditing(name: run.name)
+            template.isTemplate = true
+            template.isEnabled = false
+            template.schedule = .manual
+            runs.save(template)
+        } label: {
+            Label("Save as Template", systemImage: "square.on.square")
+        }
         if run.schedule.isAutomatic {
             Button { runs.setEnabled(!run.isEnabled, id: run.id) } label: {
                 Label(run.isEnabled ? "Turn Off Schedule" : "Turn On Schedule",
@@ -206,10 +241,10 @@ struct ScheduledRunsView: View {
     private func commuteExample() -> ScheduledRun {
         let here = session.simulated ?? session.pin ?? session.realCoordinate
         let favs = session.favorites
-        let homePlace = favs.first.map(PlaceRef.init)
+        let homePlace = (session.shortcuts[.home] ?? favs.first).map(PlaceRef.init)
             ?? here.map { PlaceRef(name: "Home", point: GeoPoint($0)) }
             ?? PlaceRef(name: "Home", point: GeoPoint(latitude: 37.3349, longitude: -122.0090))
-        let workPlace = favs.dropFirst().first.map(PlaceRef.init)
+        let workPlace = (session.shortcuts[.work] ?? favs.dropFirst().first).map(PlaceRef.init)
             ?? PlaceRef(name: "Work", point: GeoPoint(latitude: homePlace.point.latitude + 0.03, longitude: homePlace.point.longitude + 0.02))
         var r = ScheduledRun.commuteTemplate(home: homePlace, work: workPlace)
         r.tint = 1

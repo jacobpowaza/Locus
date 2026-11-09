@@ -66,6 +66,15 @@ final class SpeedTests: XCTestCase {
         XCTAssertEqual(ref.overallSource(routeLength: 2000), .routeAverage) // only 50% covered
     }
 
+    func testPercentageOffsetScalesWithReferenceSpeed() {
+        let policy = SpeedPolicy.aboveLimitPercent(25)
+        XCTAssertEqual(policy.target(reference: 12), 15)
+        XCTAssertEqual(policy.target(reference: 20), 25)
+        XCTAssertNil(policy.validationProblem)
+        XCTAssertNotNil(SpeedPolicy.aboveLimitPercent(-1).validationProblem)
+        XCTAssertNotNil(SpeedPolicy.aboveLimitPercent(101).validationProblem)
+    }
+
     func testShiftedReference() {
         let ref = SpeedReference(spans: [SpeedLimitSpan(fromDistance: 100, toDistance: 300, limit: 9)], fallback: 13, fallbackSource: .routeAverage)
         let s = ref.shifted(by: 200)

@@ -43,7 +43,8 @@ final class ScheduledRunsController: ObservableObject {
     private let routeProvider: CachingRouteProvider
     private var lastDrive: ScheduledRun?
     var savedRoutes: [ScheduledRun] { runs.filter { $0.isSavedRoute == true } }
-    var automations: [ScheduledRun] { runs.filter { $0.isSavedRoute != true } }
+    var automations: [ScheduledRun] { runs.filter { $0.isSavedRoute != true && $0.isTemplate != true } }
+    var templates: [ScheduledRun] { runs.filter { $0.isTemplate == true } }
     private let notifier = UserNotificationRunNotifier()
     private var sink: SpoofSessionSink?
     private weak var session: SpoofSession?
@@ -51,14 +52,15 @@ final class ScheduledRunsController: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var attached = false
     private var sessionStatusCancellable: AnyCancellable?
+    private var shownStorageProblems = Set<String>()
 
     /// Plain-language limits shown in the UI and the diagnostics export.
     static let platformNotes: [String] = [
         "Runs execute inside Locus. Locus pushes coordinates to iOS through the developer location-simulation service; nothing runs on Apple's side.",
         "In the foreground, steps run on time.",
         "In the background, runs continue while iOS keeps Locus alive (it holds a background location session while spoofing). This is best effort: iOS may still suspend or end the app.",
-        "If Locus is force-quit, crashes, or was ended by iOS, nothing can start or continue a run. You'll get a notification about a minute after the start time; open Locus and it starts late if within the run's late-start window.",
-        "If Locus restarts during a run, the run resumes paused at the position the schedule says it should be.",
+        "If Locus is force-quit, crashes, or was ended by iOS, nothing can start or continue a run. With notifications enabled, a reminder can open Locus. The run starts late if it is still within the late-start window, or appears as missed.",
+        "If Locus restarts during a run, it restores the last confirmed checkpoint and waits for you to resume.",
         "iOS only receives coordinates from Locus. Apps compute speed and heading themselves from successive positions, so the speed shown here is Locus's simulated speed, not a value iOS reports.",
         "Apple Maps doesn't provide posted speed limits. \"Follow speed limit\" uses Apple's estimated route-average speed and is labelled \"Estimated\".",
     ]
@@ -89,7 +91,9 @@ final class ScheduledRunsController: ObservableObject {
         sink.onReady = { [weak self] in Task { await self?.tickNow() } }
         coordinator.manualActivity = { [weak session] in session?.manualActivity }
         session.runOwnsLocation = { [weak self] in self?.isBusy == true }
-        session.canTakeManualControl = { [weak self] in self?.startingRunID == nil }
+        session.canTakeManualControl = { [weak self] in
+            self?.startingRunID == nil && self?.coordinator.executor?.stopRequested != true
+        }
         coordinator.currentLocation = { [weak session] in
             guard let session, session.isSpoofing, let sim = session.simulated else { return nil }
             return GeoPoint(sim)
@@ -106,9 +110,6 @@ final class ScheduledRunsController: ObservableObject {
             }
         coordinator.load()
         observe()
-        if !coordinator.storageProblems.isEmpty {
-            errorMessage = coordinator.storageProblems.joined(separator: "\n")
-        }
         #if DEBUG
         // Test hook (scripts/ios-sim-smoke.sh): open the Scheduled Runs sheet.
         if ProcessInfo.processInfo.arguments.contains("-LocusShowRuns") {
@@ -197,12 +198,18 @@ final class ScheduledRunsController: ObservableObject {
     /// Copies engine state into @Published properties, assigning only what
     /// changed so a 1 Hz tick doesn't redraw route polylines every second.
     private func publish() {
+        let newProblems = coordinator.storageProblems.filter { shownStorageProblems.insert($0).inserted }
+        if !newProblems.isEmpty { errorMessage = newProblems.joined(separator: "\n") }
         func set<T: Equatable>(_ kp: ReferenceWritableKeyPath<ScheduledRunsController, T>, _ value: T) {
             if self[keyPath: kp] != value { self[keyPath: kp] = value }
         }
         set(\.runs, coordinator.runs)
         set(\.history, coordinator.history)
         set(\.startingRunID, coordinator.startingRunID)
+        if let finished = coordinator.lastFinished, finished.id != lastFinished?.id, finished.outcome == .completed,
+           let drive = lastDrive, drive.id == finished.runID, case .driveTo(let destination, _)? = drive.actions.last?.kind {
+            session?.pushNamedRecent(name: destination.name, coordinate: destination.point.coordinate)
+        }
         set(\.lastFinished, coordinator.lastFinished)
         set(\.activeRunName, coordinator.executor?.state.runName)
         set(\.activeRunID, coordinator.executor?.state.runID)
@@ -212,10 +219,12 @@ final class ScheduledRunsController: ObservableObject {
 
     // MARK: - Editing
 
-    func save(_ run: ScheduledRun) {
-        coordinator.upsert(run)
+    @discardableResult
+    func save(_ run: ScheduledRun) -> Bool {
+        guard coordinator.upsert(run) else { return false }
         if run.schedule.isAutomatic && run.isEnabled { notifier.requestAuthorization() }
         scheduleTimer()
+        return true
     }
 
     func delete(_ id: UUID) { coordinator.delete(id: id) }
@@ -316,7 +325,14 @@ final class ScheduledRunsController: ObservableObject {
     }
 
     func pause() { coordinator.pause(); scheduleTimer() }
-    func resume() { coordinator.resume(); scheduleTimer() }
+    func resume() {
+        if session?.joystickActive == true || session?.followingRouteTo != nil {
+            errorMessage = "Turn off manual movement before resuming the run."
+            return
+        }
+        coordinator.resume()
+        scheduleTimer()
+    }
     func skip() { coordinator.skip(); scheduleTimer() }
     func cancel(stopSpoofing: Bool) { coordinator.cancel(stopSpoofing: stopSpoofing); scheduleTimer() }
     func changeSpeed(_ policy: SpeedPolicy) { coordinator.changeSpeed(policy); scheduleTimer() }
@@ -334,7 +350,11 @@ final class ScheduledRunsController: ObservableObject {
         var notes = ["Device: \(device.model) iOS \(device.systemVersion)"]
         notes.append("Background refresh: \(UIApplication.shared.backgroundRefreshStatus == .available ? "available" : "restricted/denied")")
         notes.append("Low Power Mode: \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "on" : "off")")
-        if let s = session { notes.append("Spoof status: \(s.status.label)") }
+        if let s = session {
+            notes.append("Connection: \(s.status.label) · path: \(s.networkDescription)")
+            if let detail = s.connectionDetail { notes.append("Last failure: \(detail)") }
+        }
+        notes.append(TunnelConfig.embeddedProvider ? "Packet tunnel provider is bundled; inspect signature for entitlement." : "No embedded packet tunnel provider. Uses an external helper.")
         #if targetEnvironment(simulator)
         notes.append("Running in the iOS Simulator: location spoofing is stubbed (no device tunnel).")
         #endif

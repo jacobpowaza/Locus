@@ -15,6 +15,7 @@ struct RunEditorView: View {
     @State private var editingAction: RunAction?
     @State private var showTimeline = false
     @State private var confirmDiscard = false
+    @State private var saveFailed = false
     @State private var editMode: EditMode = .inactive
     @FocusState private var nameFocused: Bool
 
@@ -71,13 +72,12 @@ struct RunEditorView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
+                    Button("Save") { _ = save() }
                         .fontWeight(.semibold)
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Button {
-                        save()
-                        runs.start(draft.id)
+                        if save() { runs.start(draft.id) }
                     } label: {
                         Label("Save & Run Now", systemImage: "play.fill")
                             .font(.headline)
@@ -89,6 +89,9 @@ struct RunEditorView: View {
             .confirmationDialog("Discard changes?", isPresented: $confirmDiscard, titleVisibility: .visible) {
                 Button("Discard Changes", role: .destructive) { dismiss() }
             }
+            .alert("Couldn’t Save Run", isPresented: $saveFailed) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(runs.errorMessage ?? "Check available storage and try again.") }
             .sheet(isPresented: $showAddAction) {
                 AddActionSheet { kind in
                     let action = RunAction(kind)
@@ -245,11 +248,16 @@ struct RunEditorView: View {
     private var scheduleSection: some View {
         Section {
             ScheduleEditor(schedule: $draft.schedule, latePolicy: $draft.latePolicy, isEnabled: $draft.isEnabled)
+            if draft.schedule.isAutomatic {
+                Toggle("Notify for Each Step", isOn: Binding(
+                    get: { draft.notifiesSteps ?? false }, set: { draft.notifiesSteps = $0 }
+                ))
+            }
         } header: {
             Text("When")
         } footer: {
             if draft.schedule.isAutomatic {
-                Text("Keep Locus open in the background. If iPhone closed it, you'll get a notification to open it.")
+                Text("Keep Locus open for scheduled starts. With notifications allowed, reminders can bring you back to the run.")
             }
         }
     }
@@ -360,13 +368,18 @@ struct RunEditorView: View {
         }
     }
 
-    private func save() {
+    private func save() -> Bool {
         var r = draft
         r.name = r.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if r.name.isEmpty { r.name = "Untitled Run" }
+        r.estimatedDuration = preview?.estimatedDuration
         draft = r
-        runs.save(r)
+        guard runs.save(r) else {
+            saveFailed = true
+            return false
+        }
         dismiss()
+        return true
     }
 }
 

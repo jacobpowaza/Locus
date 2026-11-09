@@ -91,6 +91,7 @@ final class CachingRouteProvider: RouteProvider {
             cache.store(r, from: from, to: to)
             return r
         } catch {
+            try Task.checkCancellation()
             if var cached = cache.lookup(from: from, to: to) {
                 cached.fromCache = true
                 return cached
@@ -179,6 +180,7 @@ struct RunCompiler {
         }
 
         for e in expanded {
+            try Task.checkCancellation()
             let id = e.action.id
             switch e.action.kind {
             case .setLocation(let place):
@@ -232,6 +234,7 @@ struct RunCompiler {
                     do {
                         route = try await routeProvider.route(from: from, to: place.point)
                     } catch {
+                        try Task.checkCancellation()
                         let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
                         throw CompileError.routeFailed(actionID: id, destination: place.name, reason: reason)
                     }

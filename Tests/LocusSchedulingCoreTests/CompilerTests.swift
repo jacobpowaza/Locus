@@ -34,6 +34,34 @@ final class CompilerTests: XCTestCase {
         XCTAssertNear(result.estimatedDuration, 30 * 60 + leg.profile.duration, 1)
     }
 
+    func testSavedAlternativeGeometrySurvivesOfflineAndUsesSelectedStops() async throws {
+        let provider = FakeRouteProvider()
+        provider.failWith = RouteProviderError.unavailable("offline")
+        let stop = PlaceRef(name: "Stop", point: offset(home.point, east: 2000))
+        let bend = offset(home.point, north: 1000)
+        let first = RunAction(.driveTo(stop, speed: nil))
+        let second = RunAction(.driveTo(work, speed: nil))
+        var run = ScheduledRun(name: "Road Trip", actions: [RunAction(.setLocation(home)), first, second])
+        run.isSavedRoute = true
+        run.preferredRoutes = [
+            first.id: PreferredRoute(origin: home.point, destination: stop.point,
+                                      route: RouteResult(points: [home.point, bend, stop.point], expectedTravelTime: 300,
+                                                         speedLimits: nil, providerName: "Preview choice")),
+            second.id: PreferredRoute(origin: stop.point, destination: work.point,
+                                       route: RouteResult(points: [stop.point, work.point], expectedTravelTime: 300,
+                                                          speedLimits: nil, providerName: "Preview choice"))
+        ]
+        let restored = try JSONDecoder().decode(ScheduledRun.self, from: JSONEncoder().encode(run))
+        let now = Date()
+        let plan = try await RunCompiler(routeProvider: provider)
+            .compile(restored, anchorDate: now, startDate: now, currentLocation: nil).plan
+        guard case .drive(let a) = plan.segments[1].kind,
+              case .drive(let b) = plan.segments[2].kind else { return XCTFail() }
+        XCTAssertTrue(a.profile.polyline.points.contains(bend))
+        XCTAssertEqual(a.profile.polyline.end, b.profile.polyline.start)
+        XCTAssertEqual(b.profile.polyline.end, work.point)
+    }
+
     func testDriveOverrunningNextStartAtIsReported() async throws {
         let routes = FakeRouteProvider()
         routes.averageSpeed = 5 // slow

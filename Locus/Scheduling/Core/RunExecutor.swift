@@ -52,6 +52,8 @@ struct ExecutionState: Codable, Equatable {
     var announcedIndex: Int = -1
     var log: [ExecutionLogEntry] = []
     var startConfirmed: Bool? = nil
+    var lastStartedStep: Int? = nil
+    var stopPending: Bool? = nil
 
     static let maxLogEntries = 500
 }
@@ -85,6 +87,7 @@ struct ExecutionSnapshot: Equatable {
     var connectionProblem: Bool
     /// Standing at a red light or stop sign right now.
     var stoppedFor: DriveStop.Kind? = nil
+    var isClearingLocation = false
 }
 
 /// Steps a compiled plan forward in time and pushes positions to a sink.
@@ -106,17 +109,20 @@ final class RunExecutor {
     private var pendingSince: Date?
     private var awaitingDelivery = false
     private var pendingDriveAdvance: Double?
-    private var stopRequested = false
+    private var queuedSpeed: SpeedPolicy?
+    private(set) var stopRequested = false
     private var skipRequested = false
 
     /// Pause the run if the sink keeps failing this long.
     var sinkFailureGrace: Double = 30
-    /// Log a catch-up message when a single tick jumps more than this. Must
+    /// Treat a tick gap this long as a suspension. Must
     /// exceed the longest planned tick (15 s during waits, see nextWakeDelay)
     /// so ordinary ticks aren't reported as suspensions.
-    var catchUpLogThreshold: Double = 20
+    var suspensionThreshold: Double = 20
     /// Mirrors every log line (the app forwards these to the system log).
     var logObserver: ((ExecutionLogEntry) -> Void)?
+    enum StepEvent: String { case started, completed, interrupted }
+    var stepObserver: ((StepEvent, PlanSegment) -> Void)?
 
     init(state: ExecutionState, sink: LocationSink?) {
         self.state = state
@@ -131,7 +137,8 @@ final class RunExecutor {
         wallNow: Date,
         monotonic: Double,
         sink: LocationSink?,
-        logObserver: ((ExecutionLogEntry) -> Void)? = nil
+        logObserver: ((ExecutionLogEntry) -> Void)? = nil,
+        stepObserver: ((StepEvent, PlanSegment) -> Void)? = nil
     ) -> RunExecutor {
         let state = ExecutionState(
             recordID: UUID(),
@@ -146,6 +153,7 @@ final class RunExecutor {
         )
         let ex = RunExecutor(state: state, sink: sink)
         ex.logObserver = logObserver
+        ex.stepObserver = stepObserver
         ex.lastMonotonic = monotonic
         ex.advance(wallNow: wallNow, monotonic: monotonic)
         return ex
@@ -167,10 +175,14 @@ final class RunExecutor {
             return
         }
         guard state.status == .running else { return }
-        if dt > catchUpLogThreshold {
+        if dt > suspensionThreshold {
             log(.warning, "Locus was suspended. Playback continues from the last confirmed position.", wallNow)
         }
-        step(dt: dt > catchUpLogThreshold || sinkFailingSince != nil ? 0 : dt, wallNow: wallNow)
+        step(dt: dt > suspensionThreshold || sinkFailingSince != nil ? 0 : dt, wallNow: wallNow)
+        if let policy = queuedSpeed, pendingDriveAdvance == nil {
+            queuedSpeed = nil
+            changeSpeed(to: policy, wallNow: wallNow)
+        }
     }
 
     /// A checkpoint represents confirmed output. Preserve it and wait for
@@ -181,7 +193,9 @@ final class RunExecutor {
         guard state.status == .running || state.status == .paused else { return }
         state.lastWall = wallNow
         state.status = .paused
-        state.pauseReason = "Locus was closed. Resume from the last saved step."
+        state.pauseReason = state.stopPending == true
+            ? "Locus closed before clearing the simulated location. Resume to retry clearing."
+            : "Locus was closed. Resume from the last saved step."
         log(.warning, "Recovered after Locus restarted. Paused at the last checkpoint.", wallNow)
     }
 
@@ -275,12 +289,18 @@ final class RunExecutor {
     }
 
     private func confirmStart(_ now: Date) {
-        guard state.startConfirmed != true else { return }
-        state.startConfirmed = true
-        log(.info, "Started \(state.trigger == .scheduled ? "scheduled" : "manual") run with \(state.plan.segments.count) steps.", now)
+        if state.startConfirmed != true {
+            state.startConfirmed = true
+            log(.info, "Started \(state.trigger == .scheduled ? "scheduled" : "manual") run with \(state.plan.segments.count) steps.", now)
+        }
+        if state.lastStartedStep != state.index {
+            state.lastStartedStep = state.index
+            stepObserver?(.started, state.plan.segments[state.index])
+        }
     }
 
-    private func enterNext() {
+    private func enterNext(completed: Bool = true) {
+        if completed { stepObserver?(.completed, state.plan.segments[state.index]) }
         state.index += 1
         state.elapsedInSegment = 0
     }
@@ -333,12 +353,16 @@ final class RunExecutor {
         case .failed:
             if let since = sinkFailingSince {
                 if wallNow.timeIntervalSince(since) >= sinkFailureGrace {
+                    if state.plan.segments.indices.contains(state.index) {
+                        stepObserver?(.interrupted, state.plan.segments[state.index])
+                    }
                     if stopRequested {
                         stopRequested = false
+                        state.stopPending = nil
                         fail("Couldn’t confirm that the simulated location was cleared.", wallNow: wallNow)
                     } else {
                         skipRequested = false
-                        pause(reason: "Lost the connection. Check LocalDevVPN, then resume.", wallNow: wallNow)
+                        pause(reason: "Connection lost. Check Settings, then resume.", wallNow: wallNow)
                     }
                 }
             } else {
@@ -365,6 +389,11 @@ final class RunExecutor {
 
     func resume(wallNow: Date, monotonic: Double) {
         guard state.status == .paused else { return }
+        if state.stopPending == true {
+            sinkFailingSince = nil
+            cancel(stopSpoofing: true, wallNow: wallNow)
+            return
+        }
         // A paused car restarts from standstill: re-solve the rest of the leg.
         if state.index < state.plan.segments.count,
            case .drive(var leg) = state.plan.segments[state.index].kind,
@@ -399,7 +428,7 @@ final class RunExecutor {
         skipRequested = false
         pendingDriveAdvance = nil
         log(.info, "Skipped: \(seg.summary).", wallNow)
-        enterNext()
+        enterNext(completed: false)
         lastMonotonic = monotonic
         if state.status == .running { step(dt: 0, wallNow: wallNow) }
         state.lastWall = wallNow
@@ -408,8 +437,10 @@ final class RunExecutor {
     func cancel(stopSpoofing: Bool, wallNow: Date) {
         guard !state.status.isFinished else { return }
         stopRequested = stopSpoofing
+        state.stopPending = stopSpoofing ? true : nil
         if stopSpoofing && !send(.stopped, wallNow: wallNow) { return }
         stopRequested = false
+        state.stopPending = nil
         state.status = .cancelled
         state.endedAt = wallNow
         state.pauseReason = nil
@@ -428,7 +459,11 @@ final class RunExecutor {
     /// inherit the run's speed (until the next Set Speed step). Drives with
     /// their own Custom Speed are left alone.
     func changeSpeed(to policy: SpeedPolicy, wallNow: Date) {
-        guard !state.status.isFinished, pendingDriveAdvance == nil else { return }
+        guard !state.status.isFinished else { return }
+        if pendingDriveAdvance != nil {
+            queuedSpeed = policy
+            return
+        }
         state.speedPolicy = policy
         var i = state.index
         while i < state.plan.segments.count {
@@ -516,7 +551,7 @@ final class RunExecutor {
             segmentIndex: state.index,
             segmentCount: segs.count,
             position: d?.point,
-            speed: paused || sinkFailingSince != nil ? 0 : (d?.speed ?? 0),
+            speed: paused || stopRequested || sinkFailingSince != nil ? 0 : (d?.speed ?? 0),
             heading: d?.heading,
             referenceSpeed: ref,
             referenceSource: refSource,

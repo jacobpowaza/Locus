@@ -126,7 +126,10 @@ struct ScheduledRun: Codable, Equatable, Identifiable {
     var lastHandledOccurrence: Date?
     /// Duration from the last successful preview/compile, for overlap checks.
     var estimatedDuration: Double?
+    var pendingOccurrence: Date? = nil
     var isSavedRoute: Bool? = nil
+    var isTemplate: Bool? = nil
+    var notifiesSteps: Bool? = nil
     var preferredRoutes: [UUID: PreferredRoute]? = nil
 
     init(
@@ -169,6 +172,23 @@ struct ScheduledRun: Codable, Equatable, Identifiable {
 // MARK: - Editing helpers (used by the builder UI, unit-tested)
 
 extension ScheduledRun {
+    func copyForEditing(name: String, now: Date = Date()) -> ScheduledRun {
+        var copy = self
+        copy.id = UUID()
+        copy.name = name
+        copy.actions = actions.map { $0.duplicated() }
+        if let preferredRoutes {
+            copy.preferredRoutes = Dictionary(uniqueKeysWithValues: zip(actions, copy.actions).compactMap { old, new in
+                preferredRoutes[old.id].map { (new.id, $0) }
+            })
+        }
+        copy.createdAt = now
+        copy.updatedAt = now
+        copy.lastHandledOccurrence = nil
+        copy.pendingOccurrence = nil
+        return copy
+    }
+
     mutating func insertAction(_ action: RunAction, at index: Int? = nil) {
         let i = min(max(0, index ?? actions.count), actions.count)
         actions.insert(action, at: i)

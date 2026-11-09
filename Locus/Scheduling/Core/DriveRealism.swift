@@ -154,12 +154,17 @@ enum DriveRealismPlanner {
     static func factor(_ knots: [SpeedKnot], atDistance d: Double) -> Double {
         guard let first = knots.first else { return 1 }
         if d <= first.distance { return first.factor }
-        for (a, b) in zip(knots, knots.dropFirst()) where d < b.distance {
-            let span = b.distance - a.distance
-            let t = span > 0 ? (d - a.distance) / span : 0
-            return a.factor + (b.factor - a.factor) * t
+        var lo = 0
+        var hi = knots.count - 1
+        if d >= knots[hi].distance { return knots[hi].factor }
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2
+            if d < knots[mid].distance { hi = mid } else { lo = mid }
         }
-        return knots[knots.count - 1].factor
+        let a = knots[lo], b = knots[hi]
+        let span = b.distance - a.distance
+        let t = span > 0 ? (d - a.distance) / span : 0
+        return a.factor + (b.factor - a.factor) * t
     }
 
     /// Distances along the line where the heading changes by more than

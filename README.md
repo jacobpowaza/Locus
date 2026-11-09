@@ -1,6 +1,6 @@
 # Locus
 
-Free and open-source iPhone location teleport. Tap the map, search a place, or drive a route — Locus injects coordinates through Apple’s **developer location service** into `locationd`, so Maps and other apps see the spoofed GPS (not just a Wi‑Fi lookup that outdoor GPS will overwrite).
+Free and open-source iPhone location teleport. Tap the map, search a place, or drive a route — Locus sends test coordinates to Apple’s **developer location service**. See the [validation matrix](docs/OVERHAUL.md) for cross-app and device-dependent behavior.
 
 <p align="center">
   <img src="docs/screenshots/map.png" alt="Locus map with spoof pin" width="180" />
@@ -11,16 +11,12 @@ Free and open-source iPhone location teleport. Tap the map, search a place, or d
 
 ## Features
 
-- Apple Maps–style search: find a place, then **Teleport**, **Drive** or **Walk** there
-- Realistic drives: at, above or below the speed limit (or a fixed speed), optional red lights (random wait up to a limit you choose), stop signs at turns, and natural speed variation
-- One-tap **Turn Off** to return to your real location
-- Live joystick — walk / run / cycle / drive with light speed variation
-- Open a GPX file in Locus to walk or drive along it
-- **Scheduled Runs** — build location routines from steps (Teleport, Drive To, Wait, Wait Until, Change Speed, Turn Off Locus, Repeat), speed modes with smooth acceleration and slower turns, and one-time or weekly schedules. Runs while Locus is alive; see [docs/SCHEDULED_RUNS.md](docs/SCHEDULED_RUNS.md) for iOS background limits
-- Background keep-alive + live status bar + drop alerts
-- Favorites & recents
-- First-run setup walkthrough
-- Fully on-device — no analytics, nothing uploaded
+- Map search for businesses, addresses, cities, landmarks, coordinates, and supported map links
+- Place cards for teleport, drive, walk, schedule, and save. Home, Work, recents, favorites, and named collections
+- Route alternatives, waypoints, saved road trips, and a live navigation dashboard
+- Follow Speed Limit, Above Speed Limit, Variable Speed, and Constant Speed. MapKit reference speeds and traffic stops are labeled as estimates or simulations
+- **Automated Runs** with a visual step editor, saved templates, schedules, history, and reminders. See [how scheduling works](docs/SCHEDULED_RUNS.md)
+- Live joystick, GPX import, first-run setup, and connection diagnostics
 
 ## Install
 
@@ -46,17 +42,13 @@ Locus uses the MIT-licensed [idevice](https://github.com/jkcoxson/idevice) FFI t
 
 Also install **[LocalDevVPN](https://apps.apple.com/us/app/localdevvpn/id6755608044)** (loopback tunnel, default `10.7.0.1`), then sideload Locus.
 
-Start a teleport on Wi‑Fi first; the session can keep working on cellular afterward.
+Locus tries the configured connection on any network. LocalDevVPN documents a cellular-only peer reachability problem on affected iPhones. Join Wi‑Fi if a new connection fails. See [the connection audit](docs/OVERHAUL.md#cellular-and-tunnel).
 
-### Pokémon GO & similar games
+### Location in other apps
 
-Locus spoofs location the same way Xcode’s developer tools do: it tells iOS “you’re here,” and other apps read that from the system. Apps that just trust GPS (Apple Maps, etc.) will follow it.
-
-**Pokémon GO is different.** It runs its own location checks and often rejects developer / simulated GPS (e.g. “Failed to detect location”). That’s expected with this method, not a Locus bug, and there’s no supported fix for it in this app.
-
-Tools like **iPogo** (and similar modified clients such as SpooferPro) work differently: they’re a **modified Pokémon GO app**, not a system-wide location spoof. Features live *inside* that altered game client, instead of feeding coordinates through iOS for every app. Locus never patches or replaces Pokémon GO; it only changes what the system reports. So those tools can appear to “work in Pokémon GO” while Locus correctly drives Maps but still gets blocked by Pokémon GO’s checks.
-
-Locus is for system-level teleporting. It isn’t a Pokémon GO client or an anti-cheat bypass.
+iOS can flag developer-generated fixes as simulated. Apps may use their own
+location validation or server-side logic. See the [compatibility matrix](docs/OVERHAUL.md#cross-application-validation)
+for what was tested.
 
 ## Build
 

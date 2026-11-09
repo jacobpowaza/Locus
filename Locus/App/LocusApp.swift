@@ -1,7 +1,10 @@
 import SwiftUI
+import UIKit
+import UserNotifications
 
 @main
 struct LocusApp: App {
+    @UIApplicationDelegateAdaptor private var appDelegate: LocusAppDelegate
     @StateObject private var session = SpoofSession()
     @StateObject private var pairing = PairingStore()
     @StateObject private var scheduledRuns = ScheduledRunsController()
@@ -30,6 +33,7 @@ struct LocusApp: App {
                     }
                 }
             }
+            .environmentObject(appDelegate)
             .environmentObject(session)
             .environmentObject(pairing)
             .environmentObject(scheduledRuns)
@@ -69,4 +73,29 @@ extension Notification.Name {
     static let locusImportGPX = Notification.Name("locusImportGPX")
     static let locusOpenScheduledRuns = Notification.Name("locusOpenScheduledRuns")
     static let locusOpenActiveRun = Notification.Name("locusOpenActiveRun")
+}
+
+
+@MainActor
+final class LocusAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, ObservableObject {
+    @Published var reminderRunID: UUID?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                             withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let value = response.notification.request.content.userInfo["runID"] as? String,
+           let id = UUID(uuidString: value) {
+            Task { @MainActor in self.reminderRunID = id }
+        }
+        completionHandler()
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
 }

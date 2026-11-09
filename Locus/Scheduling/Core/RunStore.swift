@@ -139,7 +139,8 @@ final class ScheduledRunStore {
             try data.write(to: url, options: .atomic)
             return true
         } catch {
-            problems.append("Couldn't save \(url.lastPathComponent): \(error.localizedDescription)")
+            let problem = "Couldn't save \(url.lastPathComponent): \(error.localizedDescription)"
+            if !problems.contains(problem) { problems.append(problem) }
             return false
         }
     }

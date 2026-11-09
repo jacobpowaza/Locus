@@ -162,7 +162,7 @@ struct ActiveRunView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(fmt.speedNumber(ref))
                             .font(.headline.monospacedDigit())
-                        Text(estimated ? "Limit (est.)" : "Limit")
+                        Text(estimated ? "Route estimate" : "Posted limit")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
                     }
@@ -235,6 +235,7 @@ struct ActiveRunView: View {
                     .buttonStyle(LocusPillButtonStyle(role: .danger))
                     .accessibilityLabel("End run")
             }
+            .disabled(s.isClearingLocation)
             .sensoryFeedback(.impact(weight: .light), trigger: s.status)
         }
         .padding(14)
@@ -336,7 +337,8 @@ struct ActiveRunView: View {
 
     private func statusColor(_ s: ExecutionSnapshot) -> Color {
         if s.status == .paused { return LocusTheme.statusWarn }
-        if s.connectionProblem { return LocusTheme.statusBad }
+        if s.connectionProblem || session.status.isDropped { return LocusTheme.statusBad }
+        if session.status == .connecting || session.status == .reconnecting { return LocusTheme.statusWarn }
         return LocusTheme.statusGood
     }
 
@@ -348,15 +350,21 @@ struct ActiveRunView: View {
     }
 
     private func notice(_ s: ExecutionSnapshot) -> (text: String, icon: String, color: Color)? {
+        if s.isClearingLocation {
+            return ("Clearing the simulated location…", "location.slash", LocusTheme.statusWarn)
+        }
         if s.status == .paused {
             return (s.pauseReason ?? "Paused", "pause.circle.fill", LocusTheme.statusWarn)
         }
-        if s.connectionProblem {
-            return ("Can't reach the spoofing tunnel — retrying. Check LocalDevVPN.", "wifi.exclamationmark", LocusTheme.statusBad)
+        if s.connectionProblem || session.status.isDropped {
+            return ("Reconnecting. Playback is holding at the last confirmed position.", "wifi.exclamationmark", LocusTheme.statusBad)
+        }
+        if session.status == .connecting || session.status == .reconnecting {
+            return (session.status.label, "arrow.clockwise", LocusTheme.statusWarn)
         }
         switch s.stoppedFor {
-        case .redLight?: return ("Waiting at a red light", "light.beacon.max.fill", LocusTheme.danger)
-        case .stopSign?: return ("Stopping at a stop sign", "octagon.fill", LocusTheme.danger)
+        case .redLight?: return ("Waiting at a simulated red light", "light.beacon.max.fill", LocusTheme.danger)
+        case .stopSign?: return ("Stopping at a simulated stop sign", "octagon.fill", LocusTheme.danger)
         case nil: return nil
         }
     }
@@ -364,7 +372,7 @@ struct ActiveRunView: View {
     private func speedAccessibility(_ s: ExecutionSnapshot, fmt: RunFormat, estimated: Bool) -> String {
         var text = "Simulated speed \(fmt.speed(s.speed))"
         if let ref = s.referenceSpeed {
-            text += estimated ? ", estimated limit \(fmt.speed(ref))" : ", speed limit \(fmt.speed(ref))"
+            text += estimated ? ", estimated route speed \(fmt.speed(ref))" : ", speed limit \(fmt.speed(ref))"
         }
         return text
     }
@@ -413,8 +421,8 @@ struct ActiveRunBanner: View {
 
     static func stopText(_ kind: DriveStop.Kind?) -> String? {
         switch kind {
-        case .redLight?: return "Waiting at a red light"
-        case .stopSign?: return "Stopping at a stop sign"
+        case .redLight?: return "Waiting at a simulated red light"
+        case .stopSign?: return "Stopping at a simulated stop sign"
         case nil: return nil
         }
     }

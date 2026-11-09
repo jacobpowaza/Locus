@@ -39,4 +39,4 @@ Install [LocalDevVPN](https://apps.apple.com/us/app/localdevvpn/id6755608044), c
 
 ## 4. Teleport
 
-On Wi‑Fi: drop a pin → **Teleport**. Then joystick / routes / GPX work; the session can continue on cellular.
+Search or drop a pin, then tap **Teleport To**. If a new session fails on cellular, join Wi‑Fi, connect LocalDevVPN, and try again. The **Active** indicator follows successful responses from the location service. Settings → Advanced shows the observed network path and last connection error.

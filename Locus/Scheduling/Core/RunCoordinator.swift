@@ -94,6 +94,9 @@ final class RunCoordinator {
         if let state = store.loadCheckpoint() {
             let ex = RunExecutor(state: state, sink: sink)
             ex.logObserver = logObserver
+            if let run = run(id: state.runID) {
+                ex.stepObserver = stepObserver(for: run, trigger: state.trigger)
+            }
             if state.startConfirmed == true { notifiedStartID = state.recordID }
             ex.recoverAfterRestart(wallNow: clock.now, monotonic: clock.monotonic)
             if ex.state.status.isFinished {
@@ -103,21 +106,43 @@ final class RunCoordinator {
                 checkpoint(force: true)
             }
         }
+        reconcileClaims()
         refreshReminders()
         changed()
+    }
+
+    private func reconcileClaims() {
+        guard runs.contains(where: { $0.pendingOccurrence != nil }) else { return }
+        for i in runs.indices {
+            guard let occurrence = runs[i].pendingOccurrence else { continue }
+            let run = runs[i]
+            if executor?.state.occurrence != occurrence || executor?.state.runID != run.id {
+                if !history.contains(where: { $0.runID == run.id && $0.occurrence == occurrence }) {
+                    appendHistory(RunRecord(runID: run.id, runName: run.name, trigger: .scheduled, occurrence: occurrence,
+                                            outcome: .missed, startedAt: nil, endedAt: clock.now,
+                                            message: "Locus closed before it could confirm this start."))
+                }
+            }
+            runs[i].pendingOccurrence = nil
+        }
+        persistRuns()
     }
 
     // MARK: - Editing
 
     func run(id: UUID) -> ScheduledRun? { runs.first { $0.id == id } }
 
-    func upsert(_ run: ScheduledRun) {
+    @discardableResult
+    func upsert(_ run: ScheduledRun) -> Bool {
+        let previous = runs
         var r = run
         let now = clock.now
         r.updatedAt = now
         if let i = runs.firstIndex(where: { $0.id == run.id }) {
             // Changing the schedule shouldn't immediately fire occurrences
             // that already passed under the new settings.
+            r.lastHandledOccurrence = runs[i].lastHandledOccurrence
+            r.pendingOccurrence = runs[i].pendingOccurrence
             if runs[i].schedule != r.schedule || (!runs[i].isEnabled && r.isEnabled) {
                 r.lastHandledOccurrence = now
             }
@@ -126,9 +151,14 @@ final class RunCoordinator {
             r.lastHandledOccurrence = r.lastHandledOccurrence ?? now
             runs.append(r)
         }
-        persistRuns()
+        guard persistRuns() else {
+            runs = previous
+            changed()
+            return false
+        }
         refreshReminders()
         changed()
+        return true
     }
 
     func delete(id: UUID) {
@@ -144,20 +174,9 @@ final class RunCoordinator {
     @discardableResult
     func duplicate(id: UUID) -> ScheduledRun? {
         guard let original = run(id: id) else { return nil }
-        var copy = original
-        copy.id = UUID()
-        copy.name = original.name + " Copy"
-        copy.actions = original.actions.map { $0.duplicated() }
-        if let preferredRoutes = original.preferredRoutes {
-            copy.preferredRoutes = Dictionary(uniqueKeysWithValues: zip(original.actions, copy.actions).compactMap { old, new in
-                preferredRoutes[old.id].map { (new.id, $0) }
-            })
-        }
+        var copy = original.copyForEditing(name: original.name + " Copy", now: clock.now)
         copy.isEnabled = false
-        copy.createdAt = clock.now
-        copy.lastHandledOccurrence = clock.now
-        upsert(copy)
-        return copy
+        return upsert(copy) ? copy : nil
     }
 
     func setEnabled(_ enabled: Bool, id: UUID) {
@@ -202,8 +221,11 @@ final class RunCoordinator {
             var timed = run
             timed.estimatedDuration = result.estimatedDuration
             let overlaps = RunScheduler.overlaps(of: timed, with: runs, now: now)
-            if let i = runs.firstIndex(where: { $0.id == run.id }) {
-                runs[i].estimatedDuration = result.estimatedDuration
+            if let index = runs.firstIndex(where: {
+                $0.id == run.id && $0.actions == run.actions && $0.schedule == run.schedule &&
+                    $0.defaultSpeed == run.defaultSpeed && $0.motion == run.motion && $0.preferredRoutes == run.preferredRoutes
+            }), runs[index].estimatedDuration != result.estimatedDuration {
+                runs[index].estimatedDuration = result.estimatedDuration
                 persistRuns()
             }
             return RunPreview(
@@ -284,7 +306,8 @@ final class RunCoordinator {
                 wallNow: clock.now,
                 monotonic: clock.monotonic,
                 sink: sink,
-                logObserver: logObserver
+                logObserver: logObserver,
+                stepObserver: stepObserver(for: run, trigger: trigger)
             )
             for issue in result.issues where issue.severity == .warning {
                 ex.noteWarning(issue.message, wallNow: clock.now)
@@ -341,12 +364,15 @@ final class RunCoordinator {
         let decisions = RunScheduler.evaluate(runs: runs, now: now, activeRun: active)
         guard !decisions.isEmpty else { return }
 
+        let previous = runs
+        var missed: [RunRecord] = []
         var toStart: (ScheduledRun, Date)?
         for d in decisions {
             guard let i = runs.firstIndex(where: { $0.id == d.runID }) else { continue }
             runs[i].lastHandledOccurrence = max(runs[i].lastHandledOccurrence ?? .distantPast, d.occurrence)
             switch d {
             case .start(_, let occ, _):
+                runs[i].pendingOccurrence = occ
                 toStart = (runs[i], occ)
             case .missed(_, let occ, let reason):
                 let message: String
@@ -356,18 +382,35 @@ final class RunCoordinator {
                 case .conflict(let other):
                     message = "Skipped because \"\(other)\" was running."
                 }
-                notifier?.post(title: "\(runs[i].name) missed", body: message)
-                appendHistory(RunRecord(
+                missed.append(RunRecord(
                     runID: runs[i].id, runName: runs[i].name, trigger: .scheduled, occurrence: occ,
                     outcome: .missed, startedAt: nil, endedAt: now, message: message
                 ))
             }
         }
-        persistRuns()
+        guard persistRuns() else {
+            runs = previous
+            return
+        }
+        for record in missed {
+            appendHistory(record)
+            notifier?.post(title: "\(record.runName) missed", body: record.message ?? "Open Locus to see the run history.")
+        }
         refreshReminders()
         if let (run, occ) = toStart {
             _ = await begin(run, trigger: .scheduled, occurrence: occ)
+            if let index = runs.firstIndex(where: { $0.id == run.id && $0.pendingOccurrence == occ }) {
+                runs[index].pendingOccurrence = nil
+                persistRuns()
+            }
             refreshReminders()
+        }
+    }
+
+    private func stepObserver(for run: ScheduledRun, trigger: RunTrigger) -> ((RunExecutor.StepEvent, PlanSegment) -> Void)? {
+        guard trigger == .scheduled, run.notifiesSteps == true else { return nil }
+        return { [weak self] event, segment in
+            self?.notifier?.post(title: "\(run.name) · Step \(event.rawValue)", body: segment.summary)
         }
     }
 
@@ -521,7 +564,8 @@ final class RunCoordinator {
         store.saveHistory(history)
     }
 
-    private func persistRuns() { store.saveRuns(runs) }
+    @discardableResult
+    private func persistRuns() -> Bool { store.saveRuns(runs) }
 
     private func checkpoint(force: Bool) {
         guard let ex = executor else { return }

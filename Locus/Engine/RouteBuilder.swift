@@ -45,12 +45,6 @@ enum RouteBuilder {
         return routes
     }
 
-    static func sample(polyline: MKPolyline, every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {
-        var coords = [CLLocationCoordinate2D](repeating: .init(), count: polyline.pointCount)
-        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
-        return sample(coordinates: coords, every: meters)
-    }
-
     static func sample(coordinates: [CLLocationCoordinate2D], every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {
         let coordinates = coordinates.filter { CLLocationCoordinate2DIsValid($0) }
         guard coordinates.count > 1, meters.isFinite, meters > 0 else { return coordinates }
@@ -60,11 +54,7 @@ enum RouteBuilder {
                 .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
             let steps = max(1, Int(ceil(dist / meters)))
             for i in 1...steps {
-                let t = Double(i) / Double(steps)
-                sampled.append(CLLocationCoordinate2D(
-                    latitude: a.latitude + (b.latitude - a.latitude) * t,
-                    longitude: a.longitude + (b.longitude - a.longitude) * t
-                ))
+                sampled.append(Geo.interpolate(GeoPoint(a), GeoPoint(b), Double(i) / Double(steps)).coordinate)
             }
         }
         return sampled

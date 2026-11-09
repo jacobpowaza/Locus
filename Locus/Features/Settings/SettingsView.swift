@@ -29,7 +29,7 @@ struct SettingsView: View {
                             .font(.system(size: 34))
                             .foregroundStyle(isReady ? LocusTheme.statusGood : LocusTheme.statusWarn)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(isReady ? "Ready to Go" : "Almost Ready")
+                            Text(session.status.isDropped ? "Connection Failed" : (isReady ? "Ready" : "Needs Setup"))
                                 .font(.headline)
                             Text(readinessText)
                                 .font(.subheadline)
@@ -51,14 +51,14 @@ struct SettingsView: View {
                         if vpnInstalled { LocalDevVPN.openInstalled() } else { LocalDevVPN.openAppStore() }
                     } label: {
                         row("LocalDevVPN", symbol: "lock.shield.fill", color: .green,
-                            value: vpnConnected ? "Connected" : (vpnInstalled ? "Off — Open" : "Get the App"),
+                            value: vpnConnected ? "Interface Found" : (vpnInstalled ? "Open" : "Get the App"),
                             warn: !vpnConnected)
                     }
                     .foregroundStyle(.primary)
                 } header: {
                     Text("Connection")
                 } footer: {
-                    Text("Locus needs both to change your location. Turn on LocalDevVPN while on Wi‑Fi before you teleport.")
+                    Text("If a new session fails over cellular, join Wi‑Fi, connect LocalDevVPN, and try again.")
                 }
 
                 Section("Preferences") {
@@ -123,6 +123,9 @@ struct SettingsView: View {
     }
 
     private var readinessText: String {
+        if session.status.isDropped {
+            return session.lastError ?? "See Advanced for connection details."
+        }
         if !pairing.hasPairingFile { return "Set up iPhone Pairing to start." }
         if !vpnConnected { return "Turn on LocalDevVPN to change your location." }
         return "Search for a place and tap Teleport."
@@ -255,11 +258,24 @@ struct PairingSettingsView: View {
 
 /// Tunnel address and engine details. Most people never need this.
 struct AdvancedSettingsView: View {
+    @EnvironmentObject private var session: SpoofSession
+    @EnvironmentObject private var runs: ScheduledRunsController
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var showHowItWorks = false
 
     var body: some View {
         List {
+            Section("Connection Diagnostics") {
+                LabeledContent("Session", value: session.status.label)
+                LabeledContent("Observed network path", value: session.networkDescription)
+                LabeledContent("LocalDevVPN interface", value: LocalDevVPN.isConnected ? "Detected" : "Unavailable")
+                LabeledContent("Built-in tunnel", value: TunnelConfig.embeddedProvider ? "Provider bundled" : "External helper required")
+                if let detail = session.connectionDetail {
+                    LabeledContent("Last failure", value: detail)
+                }
+                ShareLink(item: runs.diagnosticsReport()) { Label("Export Diagnostics", systemImage: "square.and.arrow.up") }
+            }
+
             Section {
                 LabeledContent("Tunnel IP") {
                     TextField("10.7.0.1", text: $tunnelIP)
@@ -280,7 +296,7 @@ struct AdvancedSettingsView: View {
             }
 
             Section {
-                Button("How Scheduled Runs Work in the Background") { showHowItWorks = true }
+                Button("How Automated Runs Work in the Background") { showHowItWorks = true }
             }
 
             Section("About the Engine") {
@@ -314,25 +330,14 @@ struct PlacesView: View {
             List {
                 Section("Favorites") {
                     if session.favorites.isEmpty {
-                        Text("Tap the star on any place to save it here.")
+                        Text("Open the Save menu on a place to add it here.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(session.favorites) { place in
-                        row(place, kind: .favorite)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    session.removeFavorite(place)
-                                } label: {
-                                    Label("Delete", systemImage: "trash.fill")
-                                }
-                                Button {
-                                    placeToRename = place
-                                    renameText = place.name
-                                } label: {
-                                    Label("Rename", systemImage: "pencil")
-                                }
-                                .tint(.gray)
-                            }
+                    ForEach(session.favorites.filter { $0.collection == nil }) { favoriteRow($0) }
+                }
+                ForEach(collections, id: \.self) { name in
+                    Section(name) {
+                        ForEach(session.favorites.filter { $0.collection == name }) { favoriteRow($0) }
                     }
                 }
 
@@ -372,6 +377,22 @@ struct PlacesView: View {
                 Text("Choose a name you'll recognize later.")
             }
         }
+    }
+
+    private var collections: [String] {
+        Set(session.favorites.compactMap(\.collection)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private func favoriteRow(_ place: SavedPlace) -> some View {
+        row(place, kind: .favorite)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("Delete", role: .destructive) { session.removeFavorite(place) }
+                Button("Rename") {
+                    placeToRename = place
+                    renameText = place.name
+                }
+                .tint(.gray)
+            }
     }
 
     private func row(_ place: SavedPlace, kind: MapPlace.Kind) -> some View {

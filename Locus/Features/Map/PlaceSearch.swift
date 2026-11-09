@@ -1,4 +1,5 @@
 import CoreLocation
+import Foundation
 import MapKit
 import SwiftUI
 
@@ -132,7 +133,9 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
     }
 
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        let fragment = completer.queryFragment
         Task { @MainActor in
+            guard case .text(let text) = DestinationQuery(self.query), text == fragment else { return }
             self.results = []
             self.isLoading = false
         }

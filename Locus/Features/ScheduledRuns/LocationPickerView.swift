@@ -13,6 +13,8 @@ struct LocationPickerView: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var picked: PlaceRef?
     @State private var query = ""
+    @State private var lookup: Task<Void, Never>?
+    @State private var errorMessage: String?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -20,13 +22,17 @@ struct LocationPickerView: View {
             VStack(spacing: 0) {
                 MapReader { proxy in
                     Map(position: $position) {
-                        UserAnnotation()
+                        if session.simulated == nil && !session.needsClear {
+                            UserAnnotation()
+                        } else if let real = session.realCoordinate {
+                            Marker("Last actual location", systemImage: "location", coordinate: real).tint(.blue)
+                        }
                         if let p = picked {
                             Marker(p.name, systemImage: "mappin", coordinate: p.point.coordinate)
                                 .tint(LocusTheme.accent)
                         }
                         if let sim = session.simulated {
-                            Annotation("Spoofed", coordinate: sim) {
+                            Annotation("Simulated", coordinate: sim) {
                                 Circle().fill(LocusTheme.accentSecondary).frame(width: 12, height: 12)
                                     .overlay(Circle().stroke(.white, lineWidth: 2))
                             }
@@ -61,10 +67,10 @@ struct LocationPickerView: View {
                     }
                     Section {
                         if let sim = session.simulated {
-                            quickRow("Current spoofed location", icon: "location.viewfinder", coord: sim)
+                            quickRow("Simulated location", icon: "location.viewfinder", coord: sim)
                         }
                         if let real = session.realCoordinate {
-                            quickRow("My real location", icon: "location.fill", coord: real)
+                            quickRow("Last actual location", icon: "location.fill", coord: real)
                         }
                         if let pin = session.pin, pin.latitude != session.simulated?.latitude {
                             quickRow("Dropped pin", icon: "mappin", coord: pin)
@@ -103,7 +109,7 @@ struct LocationPickerView: View {
             .safeAreaInset(edge: .bottom) {
                 if let p = picked {
                     HStack {
-                        Image(systemName: "mappin.circle.fill").foregroundStyle(LocusTheme.accent)
+                        Image(systemName: "mappin.circle.fill").foregroundStyle(LocusTheme.accentText)
                         VStack(alignment: .leading) {
                             Text(p.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                             Text(String(format: "%.5f, %.5f", p.point.latitude, p.point.longitude))
@@ -116,6 +122,12 @@ struct LocationPickerView: View {
                     .padding(.horizontal, 12)
                 }
             }
+            .alert("Couldn’t Find Place", isPresented: Binding(
+                get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(errorMessage ?? "") }
+            .onDisappear { lookup?.cancel() }
             .onAppear {
                 picked = initial
                 if let c = initial?.point.coordinate ?? session.simulated ?? session.realCoordinate {
@@ -131,7 +143,14 @@ struct LocationPickerView: View {
             TextField("Search places", text: $query)
                 .focused($searchFocused)
                 .submitLabel(.search)
-                .onChange(of: query) { _, v in search.query = v }
+                .onChange(of: query) { _, value in
+                    lookup?.cancel()
+                    search.query = value
+                }
+                .onSubmit {
+                    let text = query
+                    resolve { try await PlaceSearchCompleter.search(text, near: session.simulated ?? session.realCoordinate) }
+                }
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
@@ -155,7 +174,7 @@ struct LocationPickerView: View {
             Label {
                 Text(place.name).foregroundStyle(.primary)
             } icon: {
-                Image(systemName: icon).foregroundStyle(LocusTheme.accent)
+                Image(systemName: icon).foregroundStyle(LocusTheme.accentText)
             }
         }
     }
@@ -169,13 +188,24 @@ struct LocationPickerView: View {
     }
 
     private func select(_ completion: MKLocalSearchCompletion) {
-        Task {
-            let request = MKLocalSearch.Request(completion: completion)
-            guard let response = try? await MKLocalSearch(request: request).start(),
-                  let item = response.mapItems.first else { return }
-            let coord = item.placemark.coordinate
-            pick(PlaceRef(name: item.name ?? completion.title, point: GeoPoint(coord)))
-            query = ""
+        resolve { await PlaceSearchCompleter.resolve(completion) }
+    }
+
+    private func resolve(_ operation: @escaping @MainActor () async throws -> MapPlace?) {
+        lookup?.cancel()
+        lookup = Task {
+            do {
+                let result = try await operation()
+                try Task.checkCancellation()
+                if let result {
+                    pick(result.placeRef)
+                    query = ""
+                } else {
+                    errorMessage = "Try a different address, business name, or coordinates."
+                }
+            } catch {
+                if !Task.isCancelled { errorMessage = error.localizedDescription }
+            }
         }
     }
 }

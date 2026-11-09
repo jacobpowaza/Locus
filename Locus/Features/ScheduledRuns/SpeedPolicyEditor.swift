@@ -23,7 +23,7 @@ struct SpeedPolicyEditor: View {
             case .followLimit: return .follow
             case .variable: return .variable
             case .constant: return .constant
-            case .aboveLimit: return .above
+            case .aboveLimit, .aboveLimitPercent: return .above
             case .belowLimit: return .below
             }
         } set: { m in
@@ -42,6 +42,7 @@ struct SpeedPolicyEditor: View {
         Binding {
             switch policy {
             case .followLimit, .variable: return 0
+            case .aboveLimitPercent(let p): return p
             case .constant(let v), .aboveLimit(let v), .belowLimit(let v): return unit.fromMetersPerSecond(v).rounded()
             }
         } set: { newValue in
@@ -50,6 +51,7 @@ struct SpeedPolicyEditor: View {
             case .followLimit, .variable: break
             case .constant: policy = .constant(mps)
             case .aboveLimit: policy = .aboveLimit(mps)
+            case .aboveLimitPercent: policy = .aboveLimitPercent(newValue)
             case .belowLimit: policy = .belowLimit(mps)
             }
         }
@@ -57,6 +59,7 @@ struct SpeedPolicyEditor: View {
 
     private var range: ClosedRange<Double> {
         switch policy {
+        case .aboveLimitPercent: return 0...100
         case .constant: return unit == .mph ? 1...120 : 2...190
         default: return 0...(unit == .mph ? 25 : 40)
         }
@@ -68,6 +71,14 @@ struct SpeedPolicyEditor: View {
                 ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
             }
 
+            if mode.wrappedValue == .above {
+                Picker("Offset type", selection: percentage) {
+                    Text("Fixed").tag(false)
+                    Text("Percentage").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+
             switch policy {
             case .followLimit:
                 Label("Uses the route’s reference speed.", systemImage: "road.lanes")
@@ -75,7 +86,7 @@ struct SpeedPolicyEditor: View {
             case .variable:
                 Label("Varies speed along the route and slows for turns and stops.", systemImage: "waveform.path")
                     .font(.subheadline)
-            case .constant, .aboveLimit, .belowLimit:
+            case .constant, .aboveLimit, .aboveLimitPercent, .belowLimit:
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(valueTitle).foregroundStyle(.secondary)
@@ -83,7 +94,7 @@ struct SpeedPolicyEditor: View {
                         Text("\(Int(displayValue.wrappedValue))")
                             .font(.title2.weight(.bold).monospacedDigit())
                             .contentTransition(.numericText())
-                        Text(unit.label).foregroundStyle(.secondary)
+                        Text(percentage.wrappedValue ? "%" : unit.label).foregroundStyle(.secondary)
                     }
                     Slider(value: displayValue, in: range, step: 1)
                         .tint(LocusTheme.accent)
@@ -97,10 +108,19 @@ struct SpeedPolicyEditor: View {
         }
     }
 
+    private var percentage: Binding<Bool> {
+        Binding {
+            if case .aboveLimitPercent = policy { return true }
+            return false
+        } set: { enabled in
+            policy = enabled ? .aboveLimitPercent(10) : .aboveLimit(unit.toMetersPerSecond(5))
+        }
+    }
+
     private var valueTitle: String {
         switch policy {
         case .constant: return "Speed"
-        case .aboveLimit: return "Over the limit by"
+        case .aboveLimit, .aboveLimitPercent: return "Over the limit by"
         case .belowLimit: return "Under the limit by"
         case .followLimit, .variable: return ""
         }

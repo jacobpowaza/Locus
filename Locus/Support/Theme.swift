@@ -1,7 +1,12 @@
 import SwiftUI
+import UIKit
 
 enum LocusTheme {
     static let accent = Color(red: 0.35, green: 0.78, blue: 0.72)
+    static let accentText = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark { return UIColor(red: 0.35, green: 0.78, blue: 0.72, alpha: 1) }
+        return UIColor(red: 0.05, green: 0.35, blue: 0.32, alpha: 1)
+    })
     static let accentSecondary = Color(red: 0.95, green: 0.55, blue: 0.28)
     static let danger = Color(red: 0.92, green: 0.32, blue: 0.36)
     static let panelStroke = Color.white.opacity(0.12)

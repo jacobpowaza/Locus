@@ -48,7 +48,9 @@ struct DriveOptionsSheet: View {
     private var request: Request { Request(origin: origin?.point, stops: stops, retry: retry) }
 
     init(destination: MapPlace, origin: PlaceRef?, stops: [PlaceRef], prefs: DrivePreferences, onStarted: @escaping () -> Void) {
-        let draft = ScheduledRun(name: "Drive to \(destination.name)", defaultSpeed: prefs.speed, motion: prefs.motion)
+        var motion = prefs.motion
+        motion.realism?.varySpeed = false
+        let draft = ScheduledRun(name: "Drive to \(destination.name)", defaultSpeed: prefs.speed, motion: motion)
         _draft = State(initialValue: draft)
         _origin = State(initialValue: origin)
         _stops = State(initialValue: (stops + [destination.placeRef]).map { RunAction(.driveTo($0, speed: nil)) })
@@ -57,9 +59,10 @@ struct DriveOptionsSheet: View {
 
     init(saved route: ScheduledRun, onStarted: @escaping () -> Void) {
         _draft = State(initialValue: route)
-        if let first = route.actions.first, case .setLocation(let place) = first.kind {
-            _origin = State(initialValue: place)
-        }
+        let start: PlaceRef?
+        if let first = route.actions.first, case .setLocation(let place) = first.kind { start = place }
+        else { start = nil }
+        _origin = State(initialValue: start)
         _stops = State(initialValue: route.actions.filter { $0.kind.category == .driveTo })
         self.onStarted = onStarted
     }
@@ -212,6 +215,8 @@ struct DriveOptionsSheet: View {
                 Spacer()
                 if stops.count > 1 { EditButton() }
             }
+        } footer: {
+            if let origin { Text("Playback begins at \(origin.name).") }
         }
     }
 
@@ -319,9 +324,9 @@ struct DriveOptionsSheet: View {
 
     private func save() {
         var route = trip
+        route.estimatedDuration = preview?.estimatedDuration
         route.isSavedRoute = true
-        runs.save(route)
-        saved = true
+        saved = runs.save(route)
     }
 
     private func start() {

@@ -48,6 +48,32 @@ final class CoordinatorIntegrationTests: XCTestCase {
         }
     }
 
+    func testManualMovementBlocksScheduledRunWithoutChangingLocation() async {
+        let c = makeCoordinator()
+        c.manualActivity = { "Manual drive" }
+        let run = commute()
+        c.upsert(run)
+        await self.run(c, for: 120)
+        XCTAssertEqual(c.history.first?.outcome, .missed)
+        XCTAssertTrue(c.history.first?.message?.contains("Manual drive") == true)
+        XCTAssertTrue(sink.calls.isEmpty)
+    }
+
+    func testInterruptedClaimIsRecordedWithoutASecondStart() async {
+        var run = commute()
+        let occurrence = clock.now
+        run.pendingOccurrence = occurrence
+        run.lastHandledOccurrence = occurrence
+        XCTAssertTrue(ScheduledRunStore(directory: dir).saveRuns([run]))
+
+        let c = makeCoordinator()
+        XCTAssertEqual(c.history.first?.outcome, .missed)
+        XCTAssertNil(c.run(id: run.id)?.pendingOccurrence)
+        await c.tick()
+        XCTAssertTrue(sink.calls.isEmpty)
+        XCTAssertEqual(makeCoordinator().history.count, 1)
+    }
+
     func testOneOffDriveRunsWithoutBeingSavedAndStopsAtLights() async throws {
         let c = makeCoordinator()
         var drive = ScheduledRun(name: "Drive to Work", actions: [

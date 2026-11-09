@@ -1,8 +1,8 @@
-# Scheduled Runs
+# Automated Runs
 
-Scheduled Runs automate location changes. You build a run from blocks, then
-start it yourself or let it start on a schedule. Open it from **Scheduled**
-in the map's bottom panel, or with `locus://runs`.
+Automated Runs automate location changes. You build a run from blocks, then
+start it yourself or let it start on a schedule. Open it from **Automated Runs**
+in the map’s bottom panel, or with `locus://runs`.
 
 Drives started from the map (search a place → **Drive**) use the same engine
 as a one-off run that isn't saved to the list.
@@ -52,7 +52,8 @@ older saved runs decode unchanged).
 |---|---|
 | Follow speed limit | target = road reference speed |
 | Constant | target = fixed value (e.g. 35 mph) |
-| Above limit | reference + offset (e.g. +5 mph) |
+| Above Speed Limit | Reference plus a fixed or percentage offset |
+| Variable Speed | Reference with seeded variation and configured motion and traffic assumptions |
 | Below limit | reference − offset |
 | Custom (per Drive To) | any of the above for one leg |
 
@@ -120,13 +121,15 @@ Teleport, the joystick, Follow route, and Stop.
   was used. With neither, the run fails with an actionable message. Malformed
   routes are rejected: empty, all-NaN, single-point, or ending more than 2 km
   from the destination.
-- Restart recovery: the run is checkpointed every 15 s and at every step
-  change. After a relaunch, Locus replays elapsed time to the position the
-  schedule says the car should be at, then **pauses** with a note so you
-  decide when spoofing resumes.
-- Tunnel drops: Locus keeps retrying while the car keeps moving on schedule.
-  If it still can't set the location after 30 s, the run pauses with "Check
-  LocalDevVPN".
+- Restart recovery: the run is checkpointed every 15 seconds and at step
+  changes. A relaunch restores the last checkpoint **paused** until you
+  choose to resume.
+- Tunnel drops: playback holds at the last confirmed position while Locus
+  retries. Repeated failures pause the run. Teleport, arrival, and clearing
+  the simulation are recorded after the device service responds successfully.
+- Occurrence claims are persisted before starting. If Locus closes during
+  preparation, recovery records the unresolved occurrence as missed and
+  leaves manual start available.
 
 ## Platform restrictions (read this)
 
@@ -137,20 +140,22 @@ app at an exact time.
 
 | Situation | Behaviour |
 |---|---|
-| Locus in the foreground | Steps run on time (the timer ticks at about 1 s while driving). |
-| Locus in the background, process alive | Usually keeps running. Locus holds a background location session (`UIBackgroundModes: location`), which is what keeps it alive while spoofing. This is **best effort**: iOS can still suspend or end the app (memory pressure, Low Power Mode, revoked permissions). |
-| Locus force-quit, crashed, or ended by iOS | **Nothing runs.** About 60 s after a missed start you get the notification "*Run* is waiting — open Locus". Opening Locus starts the run late if it's within the late-start window. |
-| Relaunch during a run | The run resumes **paused** at the position the schedule says it should be. |
+| Locus in the foreground | The scheduler evaluates due runs and advances a drive about once a second. Connection and route availability still affect execution. |
+| Locus in the background, process alive | Background location during an active simulation is best effort. iOS may suspend or end Locus. |
+| Locus suspended or closed | A local reminder can appear about a minute after the scheduled time if notifications are authorized. Tap it to open Automated Runs. Within the late-start window, Locus can start the occurrence. After the window, it records a miss and offers Start Now. |
+| Relaunch during a run | The last checkpoint opens paused. |
 
 Other limits:
 
 - iOS receives only coordinates. The DVT service has no speed or course
   input, so other apps compute speed from successive fixes. The speed Locus
   shows is labelled *Simulated*.
-- Spoofing still needs pairing plus LocalDevVPN. Start the first spoof on
-  Wi-Fi, as in SETUP.md.
-- BGTaskScheduler can't help here. Its wake times are opportunistic, often
-  hours late, so Locus doesn't use it for timing.
+- Simulation requires pairing and a reachable developer service. See the
+  [cellular and tunnel audit](OVERHAUL.md#cellular-and-tunnel).
+- BackgroundTasks supplies an earliest eligibility time. User-configured
+  Shortcuts can open Locus, and a foreground App Intent could expose the same
+  entry point. Locus uses in-process scheduling and reminders. See the
+  [scheduling design](OVERHAUL.md#scheduling).
 
 Battery: the timer runs at 1 s only while a drive is moving. During Waits
 and Start At it ticks at most every 15 s, and every 60 s when idle. Location
@@ -169,39 +174,4 @@ SpoofSession's existing 8 s re-send.
 
 ## Physical iPhone validation
 
-What the automated tests can't cover. Do these on a real device with Locus
-paired and LocalDevVPN connected, and run
-`scripts/device-diagnostics.sh 600` from a computer if you can.
-
-1. **Smoke**: Scheduled Runs → Commute example → set Home/Work → Save & Run
-   Now. Apple Maps' blue dot should follow the drive, with turns visibly
-   slower.
-2. **Speed modes**: run the same drive with Constant 35 mph and with +5 above.
-   The ETA in the preview should change, and the live speed should match.
-3. **Pause / Skip / Speed / End**: each control works mid-drive. *End & Stop
-   Spoofing* returns to real GPS in Maps.
-4. **Manual override**: tap Teleport mid-run. The run should pause with "You
-   took manual control".
-5. **Background**: start a 20-min run, lock the phone for 10 min, then
-   unlock. The position should be where the timeline says. Check
-   `locus.log` for gaps.
-6. **Scheduled start in background**: schedule a run 3 min ahead, background
-   Locus, and wait. Check that it started on time (history shows Completed,
-   not late).
-7. **Killed app**: schedule a run 3 min ahead and force-quit Locus. The
-   "is waiting" notification should arrive at about +60 s. Open Locus within
-   the window and the run starts late. With "Skip" selected, it is recorded as
-   Missed instead.
-8. **Restart mid-run**: force-quit during a drive and reopen. The dashboard
-   should show the run paused at the schedule position. Resume should
-   continue.
-9. **Tunnel loss**: disconnect LocalDevVPN mid-drive. Expect "Can't reach the
-   spoofing tunnel", then a pause after 30 s. Reconnect and resume.
-10. **Offline route**: preview a run (this caches the route), turn on
-    Airplane Mode (Wi-Fi only for the tunnel), and run it. The log should
-    show "using the route saved earlier".
-11. **Time zone / DST**: set a run's time zone to a different city and check
-    that "Next" shows the right local time. Optionally change the device
-    clock during a Wait: the Wait must not finish early.
-12. **Sizes**: check the dashboard, editor, and live view on the smallest
-    supported iPhone and with large Dynamic Type.
+Use the [device and compatibility checklist](OVERHAUL.md#cross-application-validation).

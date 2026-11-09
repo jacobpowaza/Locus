@@ -90,13 +90,14 @@ final class SpoofSession: ObservableObject {
     }
     private let pathMonitor = NWPathMonitor()
     private var cellularOnly = false
-    private var retryAfter: Date = .distantPast
+    private var manualCommand = false
+    private var retryAfter: ContinuousClock.Instant?
     var runOwnsLocation: (() -> Bool)?
     var canTakeManualControl: (() -> Bool)?
     var manualActivity: String? {
         if joystickActive { return "Joystick" }
         if followingRouteTo != nil { return "Manual route" }
-        if isBusy { return "Location update" }
+        if manualCommand { return "Manual location update" }
         return nil
     }
     @Published var joystickActive = false
@@ -134,7 +135,7 @@ final class SpoofSession: ObservableObject {
             Task { @MainActor in
                 self?.cellularOnly = cellular && !wifi
                 self?.networkDescription = text
-                self?.retryAfter = .distantPast
+                self?.retryAfter = nil
             }
         }
         pathMonitor.start(queue: DispatchQueue(label: "com.chrismack.locus.path"))
@@ -160,6 +161,8 @@ final class SpoofSession: ObservableObject {
 
     func teleport(to coordinate: CLLocationCoordinate2D, name: String? = nil, pairing: PairingStore) async -> Bool {
         guard canControlManually(), checkPairing(pairing) else { return false }
+        manualCommand = true
+        defer { manualCommand = false }
         onManualControl?("teleport")
         cancelRoute()
         if joystickActive { stopJoystick() }
@@ -198,6 +201,9 @@ final class SpoofSession: ObservableObject {
 
     @discardableResult
     func stop(pairing: PairingStore) async -> Bool {
+        guard canControlManually() else { return false }
+        manualCommand = true
+        defer { manualCommand = false }
         onManualControl?("stop")
         return await performStop(pairing: pairing)
     }
@@ -221,6 +227,7 @@ final class SpoofSession: ObservableObject {
             simulated = nil
             simulatedName = nil
             needsClear = false
+            lastError = nil
             status = .idle
             connectionDetail = nil
             locationKeeper.acceptsActualFixes = true
@@ -311,10 +318,7 @@ final class SpoofSession: ObservableObject {
                 for i in 1...steps {
                     if Task.isCancelled { break }
                     let t = Double(i) / Double(steps)
-                    let coord = CLLocationCoordinate2D(
-                        latitude: previous.latitude + (next.latitude - previous.latitude) * t,
-                        longitude: previous.longitude + (next.longitude - previous.longitude) * t
-                    )
+                    let coord = Geo.interpolate(GeoPoint(previous), GeoPoint(next), t).coordinate
                     let delay = stepMeters / speed
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     guard !Task.isCancelled else { return }
@@ -333,21 +337,23 @@ final class SpoofSession: ObservableObject {
         }
     }
 
-    func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {
+    func addFavorite(name: String, coordinate: CLLocationCoordinate2D, collection: String? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let collectionName = collection?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = favorites.first { $0.id == SavedPlace(name: "", latitude: coordinate.latitude, longitude: coordinate.longitude).id }
         let place = SavedPlace(
             name: trimmed.isEmpty ? Self.coordinateLabel(coordinate) : trimmed,
             latitude: coordinate.latitude,
-            longitude: coordinate.longitude
+            longitude: coordinate.longitude,
+            collection: collectionName?.isEmpty == false ? collectionName : existing?.collection
         )
         // Don't let a generic star overwrite a named favorite for the same spot.
-        if let existing = favorites.first(where: { $0.id == place.id }),
-           Self.isGenericFavoriteName(place.name),
-           !Self.isGenericFavoriteName(existing.name) {
-            return
+        var saved = place
+        if let existing, Self.isGenericFavoriteName(place.name), !Self.isGenericFavoriteName(existing.name) {
+            saved.name = existing.name
         }
-        favorites.removeAll { $0.id == place.id }
-        favorites.insert(place, at: 0)
+        favorites.removeAll { $0.id == saved.id }
+        favorites.insert(saved, at: 0)
         SavedPlace.save(favorites, key: favoritesKey)
     }
 
@@ -434,7 +440,7 @@ final class SpoofSession: ObservableObject {
             status = .active
             connectionDetail = nil
             lastError = nil
-            retryAfter = .distantPast
+            retryAfter = nil
             beginBackground()
             locationKeeper.start(inBackground: true)
             startResend(pairing: pairing)
@@ -447,7 +453,7 @@ final class SpoofSession: ObservableObject {
             if simulated != nil && previous == .active { postDropNotification(message) }
             status = .dropped(message)
             locationKeeper.acceptsActualFixes = !needsClear
-            retryAfter = Date().addingTimeInterval(2)
+            retryAfter = ContinuousClock.now.advanced(by: .seconds(2))
             return false
         }
     }
@@ -462,7 +468,7 @@ final class SpoofSession: ObservableObject {
         return error.localizedDescription
     }
 
-    func canRetryConnection() -> Bool { Date() >= retryAfter }
+    func canRetryConnection() -> Bool { retryAfter.map { ContinuousClock.now >= $0 } ?? true }
 
     private func tickJoystick(pairing: PairingStore) async {
         guard joystickActive, !isBusy, canRetryConnection(), let current = simulated else { return }

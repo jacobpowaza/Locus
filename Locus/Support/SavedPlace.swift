@@ -6,6 +6,7 @@ struct SavedPlace: Identifiable, Codable, Equatable {
     var name: String
     var latitude: Double
     var longitude: Double
+    var collection: String? = nil
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)

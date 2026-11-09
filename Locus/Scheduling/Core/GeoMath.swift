@@ -216,7 +216,8 @@ enum DestinationQuery: Equatable {
                 self = .unsupportedLink
             }
         } else if host == "maps.app.goo.gl" || (host == "goo.gl" && url.path.hasPrefix("/maps/")) {
-            self = url.url.map(Self.shortGoogleLink) ?? .unsupportedLink
+            self = scheme == "https" && url.user == nil && url.password == nil
+                ? (url.url.map(Self.shortGoogleLink) ?? .unsupportedLink) : .unsupportedLink
         } else if Self.isGoogleMapsURL(url) {
             if let query = parameter("destination") ?? parameter("query") ?? parameter("q") {
                 self = Self.coordinatePair(query).map { .coordinates($0, name: nil) } ?? .text(query)

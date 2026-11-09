@@ -11,7 +11,7 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.pausesLocationUpdatesAutomatically = false
         manager.allowsBackgroundLocationUpdates = false
         manager.showsBackgroundLocationIndicator = false
@@ -20,6 +20,7 @@ final class BackgroundKeepAlive: NSObject, CLLocationManagerDelegate {
     func start(inBackground: Bool = false) {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         manager.allowsBackgroundLocationUpdates = inBackground
+        manager.desiredAccuracy = inBackground ? kCLLocationAccuracyThreeKilometers : kCLLocationAccuracyHundredMeters
         guard !running else { return }
         manager.startUpdatingLocation()
         running = true

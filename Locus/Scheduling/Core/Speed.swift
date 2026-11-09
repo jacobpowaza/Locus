@@ -36,6 +36,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     case constant(Double)
     /// Reference speed plus an offset, metres per second.
     case aboveLimit(Double)
+    /// Reference speed plus a percentage (10 means ten percent).
+    case aboveLimitPercent(Double)
     /// Reference speed minus an offset, metres per second.
     case belowLimit(Double)
 
@@ -49,6 +51,7 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
         case .followLimit, .variable: raw = reference
         case .constant(let v): raw = v
         case .aboveLimit(let o): raw = reference + o
+        case .aboveLimitPercent(let p): raw = reference * (1 + p / 100)
         case .belowLimit(let o): raw = reference - o
         }
         return min(Self.maximumSpeed, max(Self.minimumSpeed, raw))
@@ -69,6 +72,7 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
         case .variable: return "Variable Speed"
         case .constant(let v): return "Steady \(fmt(v))"
         case .aboveLimit(let o): return "\(fmt(o)) over the limit"
+        case .aboveLimitPercent(let p): return "\(p.formatted(.number.precision(.fractionLength(0))))% over the limit"
         case .belowLimit(let o): return "\(fmt(o)) under the limit"
         }
     }
@@ -80,6 +84,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
         case .constant(let v):
             if !v.isFinite || v < Self.minimumSpeed { return "Speed must be greater than zero." }
             if v > Self.maximumSpeed { return "Speed is unrealistically high." }
+        case .aboveLimitPercent(let p):
+            if !p.isFinite || !(0...100).contains(p) { return "Percentage offset must be from 0 to 100." }
         case .aboveLimit(let o), .belowLimit(let o):
             if !o.isFinite || o < 0 { return "Offset can't be negative." }
             if o > 40 { return "Offset is unrealistically large." }

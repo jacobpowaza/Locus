@@ -7,14 +7,12 @@ import SwiftUI
 /// (what Locus is doing now + favorites).
 struct HomePanel: View {
     @EnvironmentObject private var session: SpoofSession
-    @EnvironmentObject private var runs: ScheduledRunsController
 
     @Binding var searchText: String
     var searchFocused: FocusState<Bool>.Binding
     @ObservedObject var search: PlaceSearchCompleter
     @Binding var selected: MapPlace?
     @Binding var expanded: Bool
-    var resolvingSearch: Bool
     var walkingTo: UUID?
     var here: CLLocationCoordinate2D?
 
@@ -45,7 +43,7 @@ struct HomePanel: View {
                     Capsule()
                         .fill(Color.secondary.opacity(0.5))
                         .frame(width: 34, height: 4)
-                        .frame(maxWidth: .infinity, minHeight: 26)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -214,21 +212,21 @@ struct HomePanel: View {
                             .accessibilityHint(session.shortcuts[shortcutKind] == nil
                                 ? "Search for a place and use the Save menu to set this shortcut" : "")
                         }
-                    ForEach(session.favorites.prefix(10)) { fav in
-                        shortcut(title: fav.name, symbol: Self.favoriteSymbol(fav.name), color: Color(red: 1.0, green: 0.75, blue: 0.2)) {
-                            onPickPlace(MapPlace(saved: fav, kind: .favorite))
+                        ForEach(session.favorites.prefix(10)) { fav in
+                            shortcut(title: fav.name, symbol: Self.favoriteSymbol(fav.name), color: Color(red: 1.0, green: 0.75, blue: 0.2)) {
+                                onPickPlace(MapPlace(saved: fav, kind: .favorite))
+                            }
+                        }
+                        if session.favorites.isEmpty {
+                            shortcut(title: "Add", symbol: "plus", color: Color(white: 0.45)) {
+                                searchFocused.wrappedValue = true
+                            }
+                            .accessibilityHint("Search for a place, then tap the star to save it here")
+                        } else {
+                            shortcut(title: "All", symbol: "ellipsis", color: Color(white: 0.45), action: onOpenPlaces)
+                                .accessibilityLabel("All saved places")
                         }
                     }
-                    if session.favorites.isEmpty {
-                        shortcut(title: "Add", symbol: "plus", color: Color(white: 0.45)) {
-                            searchFocused.wrappedValue = true
-                        }
-                        .accessibilityHint("Search for a place, then tap the star to save it here")
-                    } else {
-                        shortcut(title: "All", symbol: "ellipsis", color: Color(white: 0.45), action: onOpenPlaces)
-                            .accessibilityLabel("All saved places")
-                    }
-                }
                     .padding(.horizontal, 16)
                 }
             }
@@ -287,7 +285,7 @@ private struct NowCard: View {
             }
         } else if session.status.isDropped {
             card(symbol: "exclamationmark.triangle.fill", color: LocusTheme.statusBad,
-                 title: "Connection lost", subtitle: "Open Settings to check the connection.", onTap: nil)
+                 title: "Connection Failed", subtitle: "Open Settings to check the connection.", onTap: nil)
         } else if session.joystickActive {
             card(symbol: "dpad.fill", color: LocusTheme.accent,
                  title: "Joystick", subtitle: "\(session.travelMode.title) speed · drag the pad to move", onTap: nil)
@@ -372,6 +370,8 @@ private struct PlaceCard: View {
     let onAddStop: () -> Void
     let onSchedule: (Bool) -> Void
     let expanded: Bool
+    @State private var showCollectionEditor = false
+    @State private var collectionName = ""
 
     private var savedID: String { SavedPlace(name: "", latitude: place.coordinate.latitude, longitude: place.coordinate.longitude).id }
     private var isFavorite: Bool { session.favorites.contains { $0.id == savedID } }
@@ -412,6 +412,12 @@ private struct PlaceCard: View {
                         }
                     } label: {
                         Label(isFavorite ? "Remove Favorite" : "Save to Favorites", systemImage: isFavorite ? "star.slash" : "star")
+                    }
+                    Button {
+                        collectionName = session.favorites.first { $0.id == savedID }?.collection ?? ""
+                        showCollectionEditor = true
+                    } label: {
+                        Label("Save to Collection", systemImage: "folder")
                     }
                     ForEach(PlaceShortcut.allCases) { shortcut in
                         Button {
@@ -459,6 +465,16 @@ private struct PlaceCard: View {
             }
         }
         .padding(.horizontal, 16)
+        .alert("Save to Collection", isPresented: $showCollectionEditor) {
+            TextField("Collection name", text: $collectionName)
+            Button("Save") {
+                session.addFavorite(name: place.name, coordinate: place.coordinate, collection: collectionName)
+            }
+            .disabled(collectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Enter a collection name to organize this place.")
+        }
     }
 
     private func circleButton(_ symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
@@ -487,7 +503,7 @@ private struct PlaceCard: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
             }
-            .foregroundStyle(prominent ? Color.black : LocusTheme.accent)
+            .foregroundStyle(prominent ? Color.black : LocusTheme.accentText)
             .frame(maxWidth: .infinity, minHeight: 60)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -646,7 +662,7 @@ struct MapSearchBar: View {
                 }
                 .font(.body)
                 .frame(minHeight: 44)
-                .foregroundStyle(LocusTheme.accent)
+                .foregroundStyle(LocusTheme.accentText)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
                 Button(action: onOpenSettings) {
