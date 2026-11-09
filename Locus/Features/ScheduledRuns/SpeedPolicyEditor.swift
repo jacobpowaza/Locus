@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Speed configuration panel: Follow / Constant / Above / Below limit.
+/// Shared speed controls for route planning, automation and live playback.
 /// Values are edited in the user's unit and stored in m/s.
 struct SpeedPolicyEditor: View {
     @Binding var policy: SpeedPolicy
@@ -9,7 +9,11 @@ struct SpeedPolicyEditor: View {
     let referenceSource: SpeedReferenceSource?
 
     private enum Mode: String, CaseIterable, Identifiable {
-        case follow = "At Limit", above = "Faster", below = "Slower", constant = "Fixed"
+        case follow = "Follow Speed Limit"
+        case above = "Above Speed Limit"
+        case variable = "Variable Speed"
+        case constant = "Constant Speed"
+        case below = "Below Speed Limit"
         var id: String { rawValue }
     }
 
@@ -17,6 +21,7 @@ struct SpeedPolicyEditor: View {
         Binding {
             switch policy {
             case .followLimit: return .follow
+            case .variable: return .variable
             case .constant: return .constant
             case .aboveLimit: return .above
             case .belowLimit: return .below
@@ -24,6 +29,7 @@ struct SpeedPolicyEditor: View {
         } set: { m in
             switch m {
             case .follow: policy = .followLimit
+            case .variable: policy = .variable
             case .constant: policy = .constant(unit.toMetersPerSecond(unit == .mph ? 35 : 50))
             case .above: policy = .aboveLimit(unit.toMetersPerSecond(5))
             case .below: policy = .belowLimit(unit.toMetersPerSecond(5))
@@ -35,13 +41,13 @@ struct SpeedPolicyEditor: View {
     private var displayValue: Binding<Double> {
         Binding {
             switch policy {
-            case .followLimit: return 0
+            case .followLimit, .variable: return 0
             case .constant(let v), .aboveLimit(let v), .belowLimit(let v): return unit.fromMetersPerSecond(v).rounded()
             }
         } set: { newValue in
             let mps = unit.toMetersPerSecond(newValue)
             switch policy {
-            case .followLimit: break
+            case .followLimit, .variable: break
             case .constant: policy = .constant(mps)
             case .aboveLimit: policy = .aboveLimit(mps)
             case .belowLimit: policy = .belowLimit(mps)
@@ -61,11 +67,13 @@ struct SpeedPolicyEditor: View {
             Picker("Speed", selection: mode) {
                 ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented)
 
             switch policy {
             case .followLimit:
-                Label("Drives at the usual speed for each road.", systemImage: "road.lanes")
+                Label("Uses the route’s reference speed.", systemImage: "road.lanes")
+                    .font(.subheadline)
+            case .variable:
+                Label("Varies speed along the route and slows for turns and stops.", systemImage: "waveform.path")
                     .font(.subheadline)
             case .constant, .aboveLimit, .belowLimit:
                 VStack(alignment: .leading, spacing: 8) {
@@ -94,7 +102,7 @@ struct SpeedPolicyEditor: View {
         case .constant: return "Speed"
         case .aboveLimit: return "Over the limit by"
         case .belowLimit: return "Under the limit by"
-        case .followLimit: return ""
+        case .followLimit, .variable: return ""
         }
     }
 
@@ -103,6 +111,6 @@ struct SpeedPolicyEditor: View {
             return "Holds this speed where the road allows, still slowing for turns."
         }
         if referenceSource == .postedLimits { return "Follows posted speed limits." }
-        return "Apple Maps doesn't share posted limits, so Locus uses the route's typical speed."
+        return "Apple Maps supplies a route-wide estimated average speed. Posted limits are unavailable."
     }
 }

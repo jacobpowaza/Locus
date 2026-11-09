@@ -33,12 +33,12 @@ struct ScheduledRunsView: View {
                     Section { finishedRow(done) }
                 }
 
-                if runs.runs.isEmpty {
+                if runs.automations.isEmpty {
                     Section { emptyState }
                 } else {
                     Section {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                            ForEach(runs.runs) { run in
+                            ForEach(runs.automations) { run in
                                 RunTile(
                                     run: run,
                                     next: runs.nextOccurrence(of: run),
@@ -57,7 +57,7 @@ struct ScheduledRunsView: View {
 
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("Scheduled Runs")
+            .navigationTitle("Automated Runs")
             .onAppear { runs.isPresentingRunsUI = true }
             .onDisappear { runs.isPresentingRunsUI = false }
             .toolbar {
@@ -110,7 +110,7 @@ struct ScheduledRunsView: View {
                     pendingDelete = nil
                 }
             }
-            .alert("Scheduled Runs", isPresented: Binding(get: { runs.errorMessage != nil }, set: { if !$0 { runs.errorMessage = nil } })) {
+            .alert("Automated Runs", isPresented: Binding(get: { runs.errorMessage != nil }, set: { if !$0 { runs.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { runs.errorMessage = nil }
             } message: {
                 Text(runs.errorMessage ?? "")
@@ -198,7 +198,7 @@ struct ScheduledRunsView: View {
     }
 
     private func blankRun() -> ScheduledRun {
-        var r = ScheduledRun(name: "", tint: runs.runs.count % RunsStyle.tints.count)
+        var r = ScheduledRun(name: "", tint: runs.automations.count % RunsStyle.tints.count)
         r.motion.realism = runs.drivePrefs.realism
         return r
     }

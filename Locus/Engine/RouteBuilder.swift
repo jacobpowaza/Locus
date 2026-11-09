@@ -8,18 +8,41 @@ enum RouteBuilder {
         to end: CLLocationCoordinate2D,
         mode: TravelMode
     ) async throws -> [CLLocationCoordinate2D] {
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: start))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: end))
-        request.transportType = mode.mkTransportType
-        request.requestsAlternateRoutes = false
+        let routes = try await routes(from: GeoPoint(start), to: GeoPoint(end), mode: mode)
+        guard let route = routes.first else { throw RouteProviderError.noRoute }
+        return sample(coordinates: route.points.map(\.coordinate), every: 12)
+    }
 
+    static func routes(
+        from start: GeoPoint,
+        to end: GeoPoint,
+        mode: TravelMode = .drive,
+        alternatives: Bool = false
+    ) async throws -> [RouteResult] {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: start.coordinate))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: end.coordinate))
+        request.transportType = mode.mkTransportType
+        request.requestsAlternateRoutes = alternatives
         let directions = MKDirections(request: request)
-        let response = try await directions.calculate()
-        guard let route = response.routes.first else {
-            throw NSError(domain: "Locus", code: 1, userInfo: [NSLocalizedDescriptionKey: "No route found"])
+        let response = try await withTaskCancellationHandler {
+            try await directions.calculate()
+        } onCancel: {
+            directions.cancel()
         }
-        return sample(polyline: route.polyline, every: 12)
+        try Task.checkCancellation()
+        let routes = response.routes.compactMap { route -> RouteResult? in
+            guard route.polyline.pointCount > 1 else { return nil }
+            let points = UnsafeBufferPointer(start: route.polyline.points(), count: route.polyline.pointCount)
+                .map { GeoPoint($0.coordinate) }
+            guard let road = try? Polyline(sanitizing: points),
+                  Geo.distance(start, road.start) <= RunCompiler.maxSnapDistance,
+                  Geo.distance(end, road.end) <= RunCompiler.maxSnapDistance else { return nil }
+            return RouteResult(points: road.points, expectedTravelTime: route.expectedTravelTime,
+                               speedLimits: nil, providerName: "Apple Maps")
+        }
+        guard !routes.isEmpty else { throw RouteProviderError.noRoute }
+        return routes
     }
 
     static func sample(polyline: MKPolyline, every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {
@@ -29,7 +52,8 @@ enum RouteBuilder {
     }
 
     static func sample(coordinates: [CLLocationCoordinate2D], every meters: CLLocationDistance) -> [CLLocationCoordinate2D] {
-        guard coordinates.count > 1 else { return coordinates }
+        let coordinates = coordinates.filter { CLLocationCoordinate2DIsValid($0) }
+        guard coordinates.count > 1, meters.isFinite, meters > 0 else { return coordinates }
         var sampled = [coordinates[0]]
         for (a, b) in zip(coordinates, coordinates.dropFirst()) {
             let dist = CLLocation(latitude: a.latitude, longitude: a.longitude)
@@ -78,8 +102,9 @@ enum GPXCodec {
                 coords.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
             }
         }
-        guard !coords.isEmpty else {
-            throw NSError(domain: "Locus", code: 2, userInfo: [NSLocalizedDescriptionKey: "No track points found in GPX"])
+        coords = coords.filter { CLLocationCoordinate2DIsValid($0) }
+        guard coords.count >= 2 else {
+            throw NSError(domain: "Locus", code: 2, userInfo: [NSLocalizedDescriptionKey: "The GPX file needs at least two valid track points"])
         }
         return coords
     }

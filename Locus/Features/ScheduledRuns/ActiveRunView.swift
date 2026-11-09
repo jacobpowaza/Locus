@@ -4,8 +4,10 @@ import SwiftUI
 /// with glass chrome on top and a glass control tray at the bottom.
 struct ActiveRunView: View {
     @EnvironmentObject private var runs: ScheduledRunsController
+    @EnvironmentObject private var session: SpoofSession
     @Environment(\.dismiss) private var dismiss
     @State private var confirmCancel = false
+    @State private var confirmRestart = false
     @State private var showSpeed = false
     @State private var showSteps = false
     @State private var speedDraft: SpeedPolicy = .followLimit
@@ -30,6 +32,9 @@ struct ActiveRunView: View {
         } message: {
             Text("Staying keeps the simulated location where it is now.")
         }
+        .confirmationDialog("Restart this drive from the beginning?", isPresented: $confirmRestart, titleVisibility: .visible) {
+            Button("Restart Drive", role: .destructive) { runs.restartDrive() }
+        }
         .sheet(isPresented: $showSpeed) { speedSheet }
         .sheet(isPresented: $showSteps) { stepsSheet }
     }
@@ -47,6 +52,9 @@ struct ActiveRunView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                if runs.canReplayDrive {
+                    ToolbarItem(placement: .bottomBar) { Button("Drive Again") { runs.replayDrive() } }
+                }
             }
         }
     }
@@ -57,7 +65,8 @@ struct ActiveRunView: View {
         let fmt = RunFormat(unit: runs.unit)
         let tz = TimeZone(identifier: plan.timeZoneID) ?? .current
         return ZStack {
-            RoutePreviewMap(plan: plan, current: s.position, heading: s.speed > 0.5 ? s.heading : nil)
+            RoutePreviewMap(plan: plan, current: session.simulated.map(GeoPoint.init),
+                            heading: s.speed > 0.5 ? s.heading : nil, followsLocation: true)
                 .ignoresSafeArea()
 
             VStack(spacing: 10) {
@@ -185,7 +194,11 @@ struct ActiveRunView: View {
             .buttonStyle(.plain)
             .accessibilityHint("Shows every step")
 
-            if s.segmentCount > 0, !runs.isOneOffActive {
+            if runs.isOneOffActive, s.distanceDriven + s.distanceRemaining > 0 {
+                ProgressView(value: s.distanceDriven, total: s.distanceDriven + s.distanceRemaining)
+                    .tint(LocusTheme.accent)
+                    .accessibilityLabel("Drive progress")
+            } else if s.segmentCount > 0 {
                 ProgressView(value: Double(min(s.segmentIndex, s.segmentCount)), total: Double(s.segmentCount))
                     .tint(LocusTheme.accent)
                     .accessibilityLabel("Step \(min(s.segmentIndex + 1, s.segmentCount)) of \(s.segmentCount)")
@@ -203,9 +216,15 @@ struct ActiveRunView: View {
                     Button { runs.pause() } label: { Label("Pause", systemImage: "pause.fill") }
                         .buttonStyle(LocusPillButtonStyle(role: .primary, expand: true))
                 }
-                Button { runs.skip() } label: { Image(systemName: "forward.end.fill") }
-                    .buttonStyle(LocusRoundButtonStyle())
-                    .accessibilityLabel(runs.isOneOffActive ? "Arrive now" : "Skip step")
+                if runs.isOneOffActive {
+                    Button { confirmRestart = true } label: { Image(systemName: "arrow.counterclockwise") }
+                        .buttonStyle(LocusRoundButtonStyle())
+                        .accessibilityLabel("Restart drive")
+                } else {
+                    Button { runs.skip() } label: { Image(systemName: "forward.end.fill") }
+                        .buttonStyle(LocusRoundButtonStyle())
+                        .accessibilityLabel("Skip step")
+                }
                 Button {
                     speedDraft = s.speedPolicy
                     showSpeed = true

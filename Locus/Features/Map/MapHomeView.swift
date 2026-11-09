@@ -17,6 +17,13 @@ struct MapHomeView: View {
     @State private var isDraggingPin = false
     @State private var suppressNextMapTap = false
     @State private var resolvingSearch = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var panelExpanded = true
+    @State private var showRoutes = false
+    @State private var showNewRoute = false
+    @State private var scheduledDraft: ScheduledRun?
+    @State private var pendingStops: [PlaceRef] = []
+    @State private var navigationRequested = false
 
     @State private var showSettings = false
     @State private var showPlaces = false
@@ -57,7 +64,10 @@ struct MapHomeView: View {
             map
 
             VStack(spacing: 8) {
-                topChrome
+                MapSearchBar(searchText: $searchText, searchFocused: $searchFocused,
+                             resolvingSearch: resolvingSearch, onSubmitSearch: submitSearch,
+                             onOpenSettings: { showSettings = true })
+                if !isSearching { topChrome }
                 Spacer(minLength: 0)
                 if session.joystickActive && !isSearching {
                     joystickControls
@@ -67,6 +77,7 @@ struct MapHomeView: View {
                     searchFocused: $searchFocused,
                     search: search,
                     selected: $selected,
+                    expanded: $panelExpanded,
                     resolvingSearch: resolvingSearch,
                     walkingTo: walkingTo,
                     here: here,
@@ -80,7 +91,9 @@ struct MapHomeView: View {
                         // Only ask when it would also end a run.
                         if runs.isActive { confirmTurnOff = true } else { runs.turnOffLocus(session: session, pairing: pairing) }
                     },
-                    onOpenSettings: { showSettings = true },
+                    onAddStop: addStop,
+                    onSchedule: schedule,
+                    onOpenRoutes: { showRoutes = true },
                     onOpenPlaces: { showPlaces = true },
                     onOpenRuns: { showScheduledRuns = true },
                     onOpenActiveRun: { showActiveRun = true }
@@ -99,6 +112,8 @@ struct MapHomeView: View {
             search.near = here
         }
         .onChange(of: searchText) { _, value in
+            searchTask?.cancel()
+            resolvingSearch = false
             search.near = here
             search.query = value
         }
@@ -106,7 +121,15 @@ struct MapHomeView: View {
             showScheduledRuns = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusOpenActiveRun)) { _ in
+            navigationRequested = true
+        }
+        .task(id: navigationRequested && drivePlace == nil && !showRoutes) {
+            guard navigationRequested, drivePlace == nil, !showRoutes else { return }
+            // Let the planner sheet finish dismissing before presenting navigation.
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
             showActiveRun = true
+            navigationRequested = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .locusImportGPX)) { note in
             guard let url = note.object as? URL else { return }
@@ -122,12 +145,23 @@ struct MapHomeView: View {
         .sheet(isPresented: $showScheduledRuns) {
             ScheduledRunsView()
         }
+        .sheet(isPresented: $showRoutes, onDismiss: {
+            if showNewRoute {
+                showNewRoute = false
+                searchFocused = true
+            }
+        }) {
+            SavedRoutesView { showNewRoute = true }
+        }
+        .sheet(item: $scheduledDraft) { draft in
+            RunEditorView(original: draft, isNew: true)
+        }
         .sheet(item: $drivePlace) { place in
-            DriveOptionsSheet(destination: place, origin: session.isSpoofing ? nil : session.realCoordinate) {
+            DriveOptionsSheet(destination: place, origin: tripOrigin, stops: pendingStops, prefs: runs.drivePrefs) {
+                pendingStops.removeAll()
                 drivePlace = nil
                 selected = nil
             }
-            .presentationDetents([.large])
         }
         .fullScreenCover(isPresented: $showActiveRun) {
             ActiveRunView()
@@ -154,7 +188,17 @@ struct MapHomeView: View {
     private var map: some View {
         MapReader { proxy in
             Map(position: $position) {
-                UserAnnotation()
+                if session.simulated == nil {
+                    UserAnnotation()
+                } else if let real = session.realCoordinate {
+                    Marker("Last actual location", systemImage: "location", coordinate: real)
+                        .tint(.blue)
+                }
+
+                ForEach(pendingStops, id: \.point) { stop in
+                    Marker(stop.name, systemImage: "flag", coordinate: stop.point.coordinate)
+                        .tint(.orange)
+                }
 
                 if let pin = session.pin, showsPin(pin) {
                     Annotation("", coordinate: pin, anchor: .bottom) {
@@ -194,7 +238,7 @@ struct MapHomeView: View {
                     }
                 }
                 if let sim = session.simulated {
-                    Annotation(session.simulatedName ?? "You (simulated)", coordinate: sim) {
+                    Annotation(session.status.isDropped ? "Last simulated location" : "Simulated location", coordinate: sim) {
                         ZStack {
                             Circle().fill(LocusTheme.accent.opacity(0.25)).frame(width: 44, height: 44)
                             Circle().fill(LocusTheme.accent).frame(width: 16, height: 16)
@@ -342,6 +386,8 @@ struct MapHomeView: View {
     // MARK: Actions
 
     private func show(_ place: MapPlace) {
+        searchTask?.cancel()
+        resolvingSearch = false
         searchFocused = false
         searchText = ""
         selected = place
@@ -367,37 +413,72 @@ struct MapHomeView: View {
     }
 
     private func select(completion: MKLocalSearchCompletion) {
-        resolvingSearch = true
-        Task {
-            let place = await PlaceSearchCompleter.resolve(completion)
-            resolvingSearch = false
-            if let place {
-                show(place)
-            } else {
-                session.lastError = "Couldn't find \(completion.title). Check your connection and try again."
-            }
+        resolveSearch {
+            await PlaceSearchCompleter.resolve(completion)
         }
     }
 
     private func submitSearch() {
         let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if let first = search.results.first {
+        if case .text = DestinationQuery(text), let first = search.results.first {
             select(completion: first)
-            return
+        } else {
+            resolveSearch { try await PlaceSearchCompleter.search(text, near: here) }
         }
+    }
+
+    private func resolveSearch(_ lookup: @escaping @MainActor () async throws -> MapPlace?) {
+        searchTask?.cancel()
         resolvingSearch = true
-        Task {
-            let place = await PlaceSearchCompleter.search(text, near: here)
-            resolvingSearch = false
-            if let place { show(place) } else { session.lastError = "No results for \"\(text)\"." }
+        searchTask = Task {
+            defer { if !Task.isCancelled { resolvingSearch = false } }
+            do {
+                let place = try await lookup()
+                try Task.checkCancellation()
+                if let place {
+                    show(place)
+                    if place.kind == .droppedPin { lookUpAddressIfNeeded() }
+                } else {
+                    session.lastError = "No places found. Try a city, street address, or coordinates."
+                }
+            } catch {
+                if !Task.isCancelled { session.lastError = error.localizedDescription }
+            }
         }
+    }
+
+    private var tripOrigin: PlaceRef? {
+        if session.isSpoofing, let coordinate = session.simulated {
+            return PlaceRef(name: session.simulatedName ?? "Simulated Location", point: GeoPoint(coordinate))
+        }
+        return session.realCoordinate.map { PlaceRef(name: "Last Actual Location", point: GeoPoint($0)) }
+    }
+
+    private func addStop(_ place: MapPlace) {
+        if !pendingStops.contains(where: { $0.point == place.placeRef.point }) { pendingStops.append(place.placeRef) }
+        selected = nil
+        searchFocused = true
+    }
+
+    private func schedule(_ place: MapPlace, drive: Bool) {
+        var actions = [RunAction(.setLocation(place.placeRef))]
+        if drive {
+            actions = tripOrigin.map { [RunAction(.setLocation($0))] } ?? []
+            actions += (pendingStops + [place.placeRef]).map { RunAction(.driveTo($0, speed: nil)) }
+        }
+        scheduledDraft = ScheduledRun(name: "\(drive ? "Drive" : "Teleport") to \(place.name)", actions: actions,
+                                      schedule: .once(.now.addingTimeInterval(3600)),
+                                      defaultSpeed: runs.drivePrefs.speed, motion: runs.drivePrefs.motion)
     }
 
     private func teleport(_ place: MapPlace) {
         let name = place.kind == .droppedPin && place.name == "Dropped Pin" ? nil : place.name
-        session.teleport(to: place.coordinate, name: name, pairing: pairing)
-        if session.isSpoofing { selected = nil }
+        Task {
+            if await session.teleport(to: place.coordinate, name: name, pairing: pairing), selected?.id == place.id {
+                selected = nil
+            }
+        }
     }
 
     private func walk(to place: MapPlace) {

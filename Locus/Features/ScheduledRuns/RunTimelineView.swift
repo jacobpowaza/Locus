@@ -131,6 +131,7 @@ struct RoutePreviewMap: View {
     let plan: RunPlan
     let current: GeoPoint?
     var heading: Double?
+    var followsLocation = false
     @State private var position: MapCameraPosition = .automatic
 
     private var legs: [DriveLeg] {
@@ -170,6 +171,28 @@ struct RoutePreviewMap: View {
         }
         .mapStyle(.standard(pointsOfInterest: .excludingAll))
         .mapControlVisibility(.hidden)
+        .onChange(of: current, initial: true) { _, location in
+            guard followsLocation, let location, !position.positionedByUser else { return }
+            follow(location)
+        }
+        .overlay(alignment: .topTrailing) {
+            if followsLocation, position.positionedByUser, let current {
+                Button { follow(current) } label: {
+                    Image(systemName: "location.fill").frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .locusGlass(.interactive, in: Circle())
+                .accessibilityLabel("Follow simulated location")
+                .padding(.trailing, 16)
+                .padding(.top, 100)
+            }
+        }
+    }
+
+    private func follow(_ point: GeoPoint) {
+        withAnimation(.easeOut(duration: 0.35)) {
+            position = .camera(MapCamera(centerCoordinate: point.coordinate, distance: 1400))
+        }
     }
 }
 

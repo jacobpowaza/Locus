@@ -13,6 +13,7 @@ struct HomePanel: View {
     var searchFocused: FocusState<Bool>.Binding
     @ObservedObject var search: PlaceSearchCompleter
     @Binding var selected: MapPlace?
+    @Binding var expanded: Bool
     var resolvingSearch: Bool
     var walkingTo: UUID?
     var here: CLLocationCoordinate2D?
@@ -24,7 +25,9 @@ struct HomePanel: View {
     var onDrive: (MapPlace) -> Void
     var onWalk: (MapPlace) -> Void
     var onTurnOff: () -> Void
-    var onOpenSettings: () -> Void
+    var onAddStop: (MapPlace) -> Void
+    var onSchedule: (MapPlace, Bool) -> Void
+    var onOpenRoutes: () -> Void
     var onOpenPlaces: () -> Void
     var onOpenRuns: () -> Void
     var onOpenActiveRun: () -> Void
@@ -35,6 +38,22 @@ struct HomePanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !isSearching {
+                Button {
+                    withAnimation(.snappy) { expanded.toggle() }
+                } label: {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 34, height: 4)
+                        .frame(maxWidth: .infinity, minHeight: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Collapse map panel" : "Expand map panel")
+                .gesture(DragGesture(minimumDistance: 12).onEnded { value in
+                    withAnimation(.snappy) { expanded = value.translation.height < 0 }
+                })
+            }
             if let place = selected, !isSearching {
                 PlaceCard(
                     place: place,
@@ -47,12 +66,13 @@ struct HomePanel: View {
                     },
                     onTeleport: { onTeleport(place) },
                     onDrive: { onDrive(place) },
-                    onWalk: { onWalk(place) }
+                    onWalk: { onWalk(place) },
+                    onAddStop: { onAddStop(place) },
+                    onSchedule: { onSchedule(place, $0) },
+                    expanded: expanded
                 )
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
             } else {
-                searchRow
-                    .padding(.horizontal, 14)
                 if isSearching {
                     searchResults
                         .transition(.opacity)
@@ -62,7 +82,7 @@ struct HomePanel: View {
                 }
             }
         }
-        .padding(.top, 14)
+        .padding(.top, isSearching ? 8 : 0)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
         .locusGlass(.regular, in: shape)
@@ -70,61 +90,6 @@ struct HomePanel: View {
     }
 
     // MARK: Search
-
-    private var searchRow: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.secondary)
-                TextField("Search for a place or address", text: $searchText)
-                    .font(.body)
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
-                    .focused(searchFocused)
-                    .submitLabel(.search)
-                    .onSubmit(onSubmitSearch)
-                if resolvingSearch {
-                    ProgressView().controlSize(.small)
-                } else if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 46)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.09)))
-
-            if isSearching {
-                Button("Cancel") {
-                    searchText = ""
-                    searchFocused.wrappedValue = false
-                }
-                .font(.body)
-                .foregroundStyle(LocusTheme.accent)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                Button(action: onOpenSettings) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .frame(width: 46, height: 46)
-                        .background(Circle().fill(Color.primary.opacity(0.09)))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Settings")
-            }
-        }
-    }
 
     private var searchResults: some View {
         ScrollView {
@@ -144,6 +109,8 @@ struct HomePanel: View {
                             .padding(.horizontal, 18)
                             .padding(.vertical, 14)
                     }
+                } else if DestinationQuery(searchText) != .text(searchText.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    resultRow(title: "Open Destination", subtitle: searchText, icon: PlaceIcon(size: 36), action: onSubmitSearch)
                 } else if search.results.isEmpty {
                     if search.isLoading {
                         HStack(spacing: 10) {
@@ -224,9 +191,29 @@ struct HomePanel: View {
             NowCard(onTurnOff: onTurnOff, onOpenActiveRun: onOpenActiveRun)
                 .padding(.horizontal, 14)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 14) {
-                    shortcut(title: "Scheduled", symbol: "calendar.badge.clock", color: LocusTheme.accent, action: onOpenRuns)
+            HStack(spacing: 20) {
+                Button(action: onOpenRoutes) { Label("Routes", systemImage: "point.topleft.down.to.point.bottomright.curvepath") }
+                Button(action: onOpenRuns) { Label("Automated Runs", systemImage: "square.stack") }
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .padding(.horizontal, 14)
+
+            if expanded {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(PlaceShortcut.allCases) { shortcutKind in
+                            shortcut(title: shortcutKind.rawValue, symbol: shortcutKind.symbol, color: LocusTheme.accent) {
+                                if let place = session.shortcuts[shortcutKind] {
+                                    onPickPlace(MapPlace(saved: place, kind: .favorite))
+                                } else {
+                                    searchFocused.wrappedValue = true
+                                }
+                            }
+                            .accessibilityHint(session.shortcuts[shortcutKind] == nil
+                                ? "Search for a place and use the Save menu to set this shortcut" : "")
+                        }
                     ForEach(session.favorites.prefix(10)) { fav in
                         shortcut(title: fav.name, symbol: Self.favoriteSymbol(fav.name), color: Color(red: 1.0, green: 0.75, blue: 0.2)) {
                             onPickPlace(MapPlace(saved: fav, kind: .favorite))
@@ -242,10 +229,11 @@ struct HomePanel: View {
                             .accessibilityLabel("All saved places")
                     }
                 }
-                .padding(.horizontal, 16)
+                    .padding(.horizontal, 16)
+                }
             }
         }
-        .padding(.top, 12)
+        .padding(.top, 4)
     }
 
     private func shortcut(title: String, symbol: String, color: Color, action: @escaping () -> Void) -> some View {
@@ -299,17 +287,17 @@ private struct NowCard: View {
             }
         } else if session.status.isDropped {
             card(symbol: "exclamationmark.triangle.fill", color: LocusTheme.statusBad,
-                 title: "Connection lost", subtitle: "Reconnecting automatically. Check LocalDevVPN.", onTap: nil)
+                 title: "Connection lost", subtitle: "Open Settings to check the connection.", onTap: nil)
         } else if session.joystickActive {
             card(symbol: "dpad.fill", color: LocusTheme.accent,
                  title: "Joystick", subtitle: "\(session.travelMode.title) speed · drag the pad to move", onTap: nil)
         } else if let dest = session.followingRouteTo {
             card(symbol: "figure.walk", color: LocusTheme.accent,
-                 title: "Walking to \(dest)", subtitle: "Other apps see you moving", onTap: nil)
+                 title: "Walking to \(dest)", subtitle: "Following the selected route", onTap: nil)
         } else if session.isSpoofing || session.status == .connecting {
             card(symbol: "location.fill", color: LocusTheme.accent,
                  title: session.simulatedName ?? "Simulated location",
-                 subtitle: session.status == .connecting ? "Connecting…" : "Other apps see you here", onTap: nil)
+                 subtitle: session.status == .connecting ? "Connecting…" : "Simulation is active", onTap: nil)
         }
     }
 
@@ -381,6 +369,9 @@ private struct PlaceCard: View {
     let onTeleport: () -> Void
     let onDrive: () -> Void
     let onWalk: () -> Void
+    let onAddStop: () -> Void
+    let onSchedule: (Bool) -> Void
+    let expanded: Bool
 
     private var savedID: String { SavedPlace(name: "", latitude: place.coordinate.latitude, longitude: place.coordinate.longitude).id }
     private var isFavorite: Bool { session.favorites.contains { $0.id == savedID } }
@@ -412,24 +403,59 @@ private struct PlaceCard: View {
                     }
                 }
                 Spacer(minLength: 4)
-                circleButton(isFavorite ? "star.fill" : "star", tint: isFavorite ? Color(red: 1.0, green: 0.75, blue: 0.2) : .primary) {
-                    if isFavorite {
-                        if let fav = session.favorites.first(where: { $0.id == savedID }) { session.removeFavorite(fav) }
-                    } else {
-                        session.addFavorite(name: place.name, coordinate: place.coordinate)
+                Menu {
+                    Button {
+                        if let favorite = session.favorites.first(where: { $0.id == savedID }) {
+                            session.removeFavorite(favorite)
+                        } else {
+                            session.addFavorite(name: place.name, coordinate: place.coordinate)
+                        }
+                    } label: {
+                        Label(isFavorite ? "Remove Favorite" : "Save to Favorites", systemImage: isFavorite ? "star.slash" : "star")
                     }
+                    ForEach(PlaceShortcut.allCases) { shortcut in
+                        Button {
+                            session.setShortcut(shortcut, place: place)
+                        } label: {
+                            Label("Set as \(shortcut.rawValue)", systemImage: shortcut.symbol)
+                        }
+                    }
+                } label: {
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
-                .sensoryFeedback(.success, trigger: isFavorite)
+                .accessibilityLabel("Save place")
                 circleButton("xmark", tint: .secondary, action: onClose)
                     .accessibilityLabel("Close")
             }
 
             HStack(spacing: 8) {
-                actionButton("Teleport", symbol: "location.fill", prominent: true, action: onTeleport)
+                actionButton("Drive To", symbol: "car.fill", prominent: true, action: onDrive)
+                actionButton("Teleport To", symbol: "location.fill", action: onTeleport)
                     .disabled(session.isBusy)
-                actionButton("Drive", symbol: "car.fill", action: onDrive)
-                actionButton("Walk", symbol: "figure.walk", loading: isWalkLoading, action: onWalk)
+                Menu {
+                    Button(action: onWalk) { Label("Walk To", systemImage: "figure.walk") }
+                        .disabled(isWalkLoading)
+                    Button(action: onAddStop) { Label("Add Stop", systemImage: "plus") }
+                    Button { onSchedule(false) } label: { Label("Schedule Teleport", systemImage: "clock") }
+                    Button { onSchedule(true) } label: { Label("Schedule Drive", systemImage: "calendar") }
+                    if let website = place.website {
+                        Link(destination: website) { Label("Website", systemImage: "safari") }
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("More place actions")
+            }
+            if expanded {
+                Text(String(format: "%.5f, %.5f", place.coordinate.latitude, place.coordinate.longitude))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
         .padding(.horizontal, 16)
@@ -495,14 +521,17 @@ struct StatusPill: View {
     @State private var tunnelConnected = LocalDevVPN.isConnected
 
     private enum Display {
-        case needsSetup, connectVPN, real, simulated, busy(String), lost
+        case needsSetup, real, simulated, busy(String), lost
     }
 
     private var display: Display {
         switch session.status {
         case .idle:
-            if !pairing.hasPairingFile { return .needsSetup }
-            return tunnelConnected ? .real : .connectVPN
+            #if targetEnvironment(simulator)
+            return .real
+            #else
+            return pairing.hasPairingFile && tunnelConnected ? .real : .needsSetup
+            #endif
         case .connecting: return .busy("Connecting…")
         case .active: return .simulated
         case .reconnecting: return .busy("Reconnecting…")
@@ -532,21 +561,17 @@ struct StatusPill: View {
     @ViewBuilder private var content: some View {
         switch display {
         case .needsSetup:
-            pill("Finish Setup", color: LocusTheme.statusWarn, chevron: true)
-                .onTapGesture(perform: onFixSetup)
-                .accessibilityAddTraits(.isButton)
-        case .connectVPN:
-            pill("Connect LocalDevVPN", color: LocusTheme.statusWarn, chevron: true)
-                .onTapGesture(perform: LocalDevVPN.openOrInstall)
-                .accessibilityAddTraits(.isButton)
+            Button(action: onFixSetup) { pill("Needs Setup", color: LocusTheme.statusWarn, chevron: true) }
+                .buttonStyle(.plain)
         case .real:
-            pill("Real Location", color: Color.secondary, chevron: false)
+            pill("Ready", color: Color.secondary, chevron: false)
         case .simulated:
-            pill("Simulated Location", color: LocusTheme.statusGood, chevron: false)
+            pill("Active", color: LocusTheme.statusGood, chevron: false)
         case .busy(let text):
             pill(text, color: LocusTheme.statusWarn, chevron: false)
         case .lost:
-            pill("Connection Lost", color: LocusTheme.statusBad, chevron: false)
+            Button(action: onFixSetup) { pill("Connection Failed", color: LocusTheme.statusBad, chevron: true) }
+                .buttonStyle(.plain)
         }
     }
 
@@ -571,4 +596,73 @@ struct StatusPill: View {
         .contentShape(Capsule())
         .accessibilityElement(children: .combine)
     }
+}
+
+
+struct MapSearchBar: View {
+    @Binding var searchText: String
+    var searchFocused: FocusState<Bool>.Binding
+    var resolvingSearch: Bool
+    var onSubmitSearch: () -> Void
+    var onOpenSettings: () -> Void
+    private var isSearching: Bool { searchFocused.wrappedValue || !searchText.isEmpty }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TextField("Search places or paste a map link", text: $searchText)
+                    .font(.body)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .focused(searchFocused)
+                    .submitLabel(.search)
+                    .onSubmit(onSubmitSearch)
+                if resolvingSearch {
+                    ProgressView().controlSize(.small)
+                } else if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 46)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.09)))
+
+            if isSearching {
+                Button("Cancel") {
+                    searchText = ""
+                    searchFocused.wrappedValue = false
+                }
+                .font(.body)
+                .frame(minHeight: 44)
+                .foregroundStyle(LocusTheme.accent)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                Button(action: onOpenSettings) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 46, height: 46)
+                        .background(Circle().fill(Color.primary.opacity(0.09)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
+            }
+        }
+        .padding(5)
+        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
 }

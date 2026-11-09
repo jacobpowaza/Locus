@@ -100,6 +100,13 @@ struct LatePolicy: Codable, Equatable, Hashable {
     static let standard = LatePolicy()
 }
 
+/// The selected geometry for a specific leg and its original endpoints.
+struct PreferredRoute: Codable, Equatable {
+    var origin: GeoPoint
+    var destination: GeoPoint
+    var route: RouteResult
+}
+
 struct ScheduledRun: Codable, Equatable, Identifiable {
     var id: UUID
     var name: String
@@ -119,6 +126,8 @@ struct ScheduledRun: Codable, Equatable, Identifiable {
     var lastHandledOccurrence: Date?
     /// Duration from the last successful preview/compile, for overlap checks.
     var estimatedDuration: Double?
+    var isSavedRoute: Bool? = nil
+    var preferredRoutes: [UUID: PreferredRoute]? = nil
 
     init(
         id: UUID = UUID(),

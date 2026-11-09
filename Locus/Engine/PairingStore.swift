@@ -92,11 +92,12 @@ final class PairingStore: ObservableObject {
         }
 
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: pairingURL.path) {
-            try FileManager.default.removeItem(at: pairingURL)
-        }
-        try data.write(to: pairingURL, options: .atomic)
+        try data.write(to: pairingURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: pairingURL.path)
+        var protectedURL = pairingURL
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try protectedURL.setResourceValues(values)
         hasPairingFile = true
         lastError = nil
     }

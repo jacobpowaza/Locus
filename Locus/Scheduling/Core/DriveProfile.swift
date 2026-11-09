@@ -67,11 +67,12 @@ struct DriveProfile: Codable, Equatable {
         // takes the lower of the segments on either side so speed changes
         // happen at the boundary (brake before a slower zone, speed up only
         // after entering a faster one).
+        let variesSpeed = policy == .variable || (policy.usesReference && motion.realism?.varySpeed == true)
         var segTarget = [Double](repeating: 0, count: max(0, n - 1))
         for k in 0..<(n - 1) {
             let mid = (line.cumulative[k] + line.cumulative[k + 1]) / 2
             let base = policy.target(reference: reference.speed(atDistance: mid).value)
-            let drift = speedKnots.isEmpty ? 1 : DriveRealismPlanner.factor(speedKnots, atDistance: mid)
+            let drift = variesSpeed ? DriveRealismPlanner.factor(speedKnots, atDistance: mid) : 1
             segTarget[k] = min(SpeedPolicy.maximumSpeed, max(SpeedPolicy.minimumSpeed, base * drift))
         }
         var v = [Double](repeating: 0, count: n)

@@ -142,7 +142,7 @@ final class CoordinatorIntegrationTests: XCTestCase {
         let s = try XCTUnwrap(c2.snapshot())
         XCTAssertEqual(s.status, .paused)
         XCTAssertTrue(s.pauseReason?.contains("closed") == true)
-        XCTAssertGreaterThan(s.distanceDriven, before.distanceDriven + 500, "caught up to the schedule position")
+        XCTAssertLessThanOrEqual(s.distanceDriven, before.distanceDriven, "resume from confirmed progress")
         XCTAssertTrue(sink.calls.isEmpty)
 
         c2.resume()

@@ -10,6 +10,7 @@ struct MapPlace: Identifiable, Equatable {
     var subtitle: String
     var coordinate: CLLocationCoordinate2D
     var category: MKPointOfInterestCategory?
+    var website: URL? = nil
     var kind: Kind = .search
 
     enum Kind { case search, favorite, recent, droppedPin }
@@ -93,9 +94,15 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
 
     var query: String = "" {
         didSet {
-            completer.queryFragment = query
-            isLoading = !query.isEmpty
-            if query.isEmpty { results = [] }
+            results = []
+            completer.cancel()
+            if case .text(let text) = DestinationQuery(query), !text.isEmpty {
+                isLoading = true
+                completer.queryFragment = text
+            } else {
+                isLoading = false
+                completer.queryFragment = ""
+            }
         }
     }
 
@@ -115,8 +122,10 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
     }
 
     nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        let fragment = completer.queryFragment
         let items = completer.results
         Task { @MainActor in
+            guard !fragment.isEmpty, case .text(let text) = DestinationQuery(self.query), text == fragment else { return }
             self.results = items
             self.isLoading = false
         }
@@ -134,29 +143,60 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
         let request = MKLocalSearch.Request(completion: completion)
         guard let response = try? await MKLocalSearch(request: request).start(),
               let item = response.mapItems.first else { return nil }
-        return MapPlace(
-            name: item.name ?? completion.title,
-            subtitle: completion.subtitle.isEmpty ? "" : completion.subtitle,
-            coordinate: item.placemark.coordinate,
-            category: item.pointOfInterestCategory
-        )
+        return place(item, fallbackName: completion.title, subtitle: completion.subtitle)
     }
 
     /// Runs the typed text as a full search (Return key) and takes the best hit.
-    static func search(_ text: String, near: CLLocationCoordinate2D?) async -> MapPlace? {
+    static func search(_ input: String, near: CLLocationCoordinate2D?) async throws -> MapPlace? {
+        var query = DestinationQuery(input)
+        if case .shortGoogleLink(let url) = query {
+            let delegate = MapsRedirectDelegate()
+            let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            var request = URLRequest(url: url, timeoutInterval: 8)
+            request.httpMethod = "HEAD"
+            let (_, response) = try await session.data(for: request)
+            query = response.url.map { DestinationQuery($0.absoluteString) } ?? .unsupportedLink
+        }
+        switch query {
+        case .coordinates(let point, let name):
+            return MapPlace(name: name ?? "Dropped Pin", subtitle: String(format: "%.5f, %.5f", point.latitude, point.longitude),
+                            coordinate: point.coordinate, kind: .droppedPin)
+        case .applePlaceID(let id, let fallback):
+            if let identifier = MKMapItem.Identifier(rawValue: id),
+               let item = try? await MKMapItemRequest(mapItemIdentifier: identifier).mapItem {
+                return place(item, fallbackName: "Apple Maps Place")
+            }
+            if let fallback { return MapPlace.droppedPin(at: fallback.coordinate) }
+            throw SearchError.unavailableLink
+        case .text(let text):
+            return try await textSearch(text, near: near)
+        case .unsupportedLink, .shortGoogleLink:
+            throw SearchError.unavailableLink
+        }
+    }
+
+    private static func textSearch(_ text: String, near: CLLocationCoordinate2D?) async throws -> MapPlace? {
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = text
         if let near {
             request.region = MKCoordinateRegion(center: near, latitudinalMeters: 50_000, longitudinalMeters: 50_000)
         }
-        guard let response = try? await MKLocalSearch(request: request).start(),
-              let item = response.mapItems.first else { return nil }
-        return MapPlace(
-            name: item.name ?? text,
-            subtitle: item.placemark.title ?? "",
-            coordinate: item.placemark.coordinate,
-            category: item.pointOfInterestCategory
-        )
+        let search = MKLocalSearch(request: request)
+        let response = try await withTaskCancellationHandler { try await search.start() } onCancel: { search.cancel() }
+        return response.mapItems.first.map { place($0, fallbackName: text) }
+    }
+
+    private static func place(_ item: MKMapItem, fallbackName: String, subtitle: String? = nil) -> MapPlace {
+        var place = MapPlace(name: item.name ?? fallbackName, subtitle: subtitle ?? item.placemark.title ?? "",
+                             coordinate: item.placemark.coordinate, category: item.pointOfInterestCategory)
+        if let url = item.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") { place.website = url }
+        return place
+    }
+
+    private enum SearchError: LocalizedError {
+        case unavailableLink
+        var errorDescription: String? { "This link doesn’t identify a place. Try the address or latitude and longitude." }
     }
 
     /// Street address for a dropped pin.
@@ -167,5 +207,20 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
         let city = [mark.locality, mark.administrativeArea].compactMap { $0 }.joined(separator: ", ")
         let name = street.isEmpty ? (mark.name ?? city) : street
         return (name.isEmpty ? "Dropped Pin" : name, city)
+    }
+}
+
+
+// Short links are expanded over HTTPS and redirects stay inside Google Maps.
+private final class MapsRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let url = request.url, url.scheme == "https",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              DestinationQuery.isGoogleMapsURL(components) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }

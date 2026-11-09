@@ -39,7 +39,6 @@ struct LocusApp: App {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { scheduledRuns.sceneBecameActive() }
             }
-            .preferredColorScheme(.dark)
             .onOpenURL { url in
                 handleIncoming(url)
             }
@@ -55,7 +54,8 @@ struct LocusApp: App {
     private func handleIncoming(_ url: URL) {
         let ext = url.pathExtension.lowercased()
         if ["plist", "mobiledevicepairing", "mobiledevicepair"].contains(ext) {
-            try? pairing.importPairing(from: url)
+            do { try pairing.importPairing(from: url) }
+            catch { session.lastError = error.localizedDescription }
         } else if ext == "gpx" {
             NotificationCenter.default.post(name: .locusImportGPX, object: url)
         } else if url.scheme == "locus", url.host == "runs" {

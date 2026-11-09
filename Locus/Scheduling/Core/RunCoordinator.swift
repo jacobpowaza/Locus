@@ -66,6 +66,9 @@ final class RunCoordinator {
     let clock: RunClock
     weak var sink: LocationSink?
     weak var notifier: RunNotifier?
+    var manualActivity: (() -> String?)?
+    private let manualActivityID = UUID()
+    private var notifiedStartID: UUID?
 
     /// How long after a missed start the reminder notification fires.
     static let reminderDelay: Double = 60
@@ -91,6 +94,7 @@ final class RunCoordinator {
         if let state = store.loadCheckpoint() {
             let ex = RunExecutor(state: state, sink: sink)
             ex.logObserver = logObserver
+            if state.startConfirmed == true { notifiedStartID = state.recordID }
             ex.recoverAfterRestart(wallNow: clock.now, monotonic: clock.monotonic)
             if ex.state.status.isFinished {
                 finish(ex)
@@ -144,6 +148,11 @@ final class RunCoordinator {
         copy.id = UUID()
         copy.name = original.name + " Copy"
         copy.actions = original.actions.map { $0.duplicated() }
+        if let preferredRoutes = original.preferredRoutes {
+            copy.preferredRoutes = Dictionary(uniqueKeysWithValues: zip(original.actions, copy.actions).compactMap { old, new in
+                preferredRoutes[old.id].map { (new.id, $0) }
+            })
+        }
         copy.isEnabled = false
         copy.createdAt = clock.now
         copy.lastHandledOccurrence = clock.now
@@ -255,6 +264,7 @@ final class RunCoordinator {
     }
 
     private func begin(_ run: ScheduledRun, trigger: RunTrigger, occurrence: Date?) async -> String? {
+        if let manual = manualActivity?() { return "Finish \(manual.lowercased()) before starting a run." }
         startingRunID = run.id
         changed()
         defer {
@@ -284,6 +294,7 @@ final class RunCoordinator {
                 persistRuns()
             }
             executor = ex
+            notifyStart(ex)
             if ex.state.status.isFinished {
                 finish(ex)
             } else {
@@ -311,6 +322,7 @@ final class RunCoordinator {
         let now = clock.now
         if let ex = executor {
             ex.advance(wallNow: now, monotonic: clock.monotonic)
+            notifyStart(ex)
             if ex.state.status.isFinished {
                 finish(ex)
             } else {
@@ -325,6 +337,7 @@ final class RunCoordinator {
         guard startingRunID == nil else { return }
         let now = clock.now
         let active = executor.flatMap { $0.state.status.isFinished ? nil : (id: $0.state.runID, name: $0.state.runName) }
+            ?? manualActivity?().map { (id: manualActivityID, name: $0) }
         let decisions = RunScheduler.evaluate(runs: runs, now: now, activeRun: active)
         guard !decisions.isEmpty else { return }
 
@@ -342,8 +355,8 @@ final class RunCoordinator {
                     message = "Locus wasn't running at the start time (\(DurationText.short(by)) ago), beyond the \(DurationText.short(runs[i].latePolicy.maxDelay)) late-start window."
                 case .conflict(let other):
                     message = "Skipped because \"\(other)\" was running."
-                    notifier?.post(title: "\(runs[i].name) skipped", body: message)
                 }
+                notifier?.post(title: "\(runs[i].name) missed", body: message)
                 appendHistory(RunRecord(
                     runID: runs[i].id, runName: runs[i].name, trigger: .scheduled, occurrence: occ,
                     outcome: .missed, startedAt: nil, endedAt: now, message: message
@@ -358,14 +371,21 @@ final class RunCoordinator {
         }
     }
 
+    private func notifyStart(_ ex: RunExecutor) {
+        guard ex.state.trigger == .scheduled, ex.state.startConfirmed == true, notifiedStartID != ex.state.recordID else { return }
+        notifiedStartID = ex.state.recordID
+        notifier?.post(title: "\(ex.state.runName) started", body: "Open Locus to follow the run.")
+    }
+
     private func finish(_ ex: RunExecutor) {
         let record = RunRecord(finished: ex.state, endedAt: clock.now)
         appendHistory(record)
         lastFinished = record
         executor = nil
         store.saveCheckpoint(nil)
-        if record.outcome == .failed, ex.state.trigger == .scheduled {
-            notifier?.post(title: "\(record.runName) failed", body: record.message ?? "See Run History for details.")
+        if ex.state.trigger == .scheduled, record.outcome == .failed || record.outcome == .completed {
+            notifier?.post(title: "\(record.runName) \(record.outcome == .completed ? "completed" : "failed")",
+                           body: record.message ?? "Open Locus to see the run history.")
         }
     }
 
@@ -397,7 +417,7 @@ final class RunCoordinator {
     func cancel(stopSpoofing: Bool) {
         guard let ex = executor else { return }
         ex.cancel(stopSpoofing: stopSpoofing, wallNow: clock.now)
-        finish(ex)
+        if ex.state.status.isFinished { finish(ex) } else { checkpoint(force: true) }
         changed()
     }
 
@@ -421,7 +441,7 @@ final class RunCoordinator {
     }
 
     /// Spoofing session reconnected; re-send the current position.
-    func spoofingReconnected() {
+    func invalidateConfirmedOutput() {
         executor?.invalidateSentPosition()
     }
 

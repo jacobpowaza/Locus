@@ -129,6 +129,41 @@ final class ExecutorTests: XCTestCase {
         XCTAssertLessThan(Geo.distance(p1, sink.last!), 25)
     }
 
+    func testConsecutiveLocationActionsAreDeliveredInOrder() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .setLocation(work), .stopSpoofing])
+        let ex = start(run, plan)
+        XCTAssertEqual(sink.calls, [.set(home.point), .set(work.point), .stop])
+        XCTAssertEqual(ex.state.status, .completed)
+    }
+
+    func testPendingTeleportCannotCompleteRunOrStartItsWait() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 60)])
+        sink.pending = true
+        let ex = start(run, plan)
+        tick(ex, seconds: 30)
+        XCTAssertEqual(ex.state.index, 0)
+        XCTAssertEqual(ex.state.elapsedInSegment, 0)
+        XCTAssertFalse(ex.state.log.contains { $0.message.contains("Set location") })
+        sink.pending = false
+        tick(ex, seconds: 1)
+        XCTAssertEqual(ex.state.index, 1)
+        XCTAssertEqual(ex.state.elapsedInSegment, 0)
+    }
+
+    func testFailedFinalStopIsNeverReportedAsComplete() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 10), .stopSpoofing])
+        let ex = start(run, plan)
+        sink.failing = true
+        tick(ex, seconds: 45)
+        XCTAssertEqual(ex.state.status, .paused)
+        XCTAssertEqual(ex.state.index, 2)
+        XCTAssertFalse(ex.state.log.contains { $0.message == "Turned off Locus." })
+        sink.failing = false
+        ex.resume(wallNow: clock.now, monotonic: clock.monotonic)
+        XCTAssertEqual(ex.state.status, .completed)
+        XCTAssertEqual(sink.calls.last, .stop)
+    }
+
     func testStartAtWaitsForWallClockAndHonoursClockChanges() async throws {
         // 10:00 EST now; wait until 10:30.
         var cal = Calendar(identifier: .gregorian)
@@ -156,15 +191,15 @@ final class ExecutorTests: XCTestCase {
         XCTAssertEqual(ex.state.status, .completed)
     }
 
-    func testCatchUpAfterSuspension() async throws {
+    func testSuspensionKeepsLastConfirmedPosition() async throws {
         let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: .constant(20))])
         let ex = start(run, plan)
         tick(ex, seconds: 10)
         // App suspended 100 s (monotonic includes sleep).
         clock.advance(100)
         ex.advance(wallNow: clock.now, monotonic: clock.monotonic)
-        XCTAssertTrue(ex.state.log.contains { $0.message.contains("Caught up") })
-        XCTAssertNear(ex.state.elapsedInSegment, 110, 0.01)
+        XCTAssertTrue(ex.state.log.contains { $0.message.contains("Playback continues") })
+        XCTAssertNear(ex.state.elapsedInSegment, 10, 0.01)
     }
 
     func testNormalWaitTicksAreNotReportedAsSuspension() async throws {
@@ -173,7 +208,7 @@ final class ExecutorTests: XCTestCase {
         // During waits the app ticks at most every 15 s (nextWakeDelay).
         XCTAssertLessThanOrEqual(ex.nextWakeDelay(wallNow: clock.now), 15)
         tick(ex, seconds: 60, step: 15.5)
-        XCTAssertFalse(ex.state.log.contains { $0.message.contains("Caught up") })
+        XCTAssertFalse(ex.state.log.contains { $0.message.contains("Playback continues") })
     }
 
     func testSinkFailurePausesAfterGraceAndRecovers() async throws {
@@ -192,7 +227,7 @@ final class ExecutorTests: XCTestCase {
         XCTAssertFalse(ex.snapshot(wallNow: clock.now).connectionProblem)
     }
 
-    func testRecoveryAfterRestartCatchesUpAndPauses() async throws {
+    func testRecoveryAfterRestartPreservesConfirmedCheckpoint() async throws {
         let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: .constant(20)), .wait(seconds: 3600)])
         let ex = start(run, plan)
         tick(ex, seconds: 30)
@@ -205,19 +240,19 @@ final class ExecutorTests: XCTestCase {
         let ex2 = RunExecutor(state: restored, sink: fresh)
         ex2.recoverAfterRestart(wallNow: clock.now, monotonic: clock.monotonic)
         XCTAssertEqual(ex2.state.status, .paused)
-        XCTAssertNear(ex2.state.elapsedInSegment, 150, 0.01)
+        XCTAssertNear(ex2.state.elapsedInSegment, 30, 0.01)
         XCTAssertTrue(fresh.calls.isEmpty, "doesn't spoof until the user resumes")
         ex2.resume(wallNow: clock.now, monotonic: clock.monotonic)
         XCTAssertEqual(fresh.calls.count, 1)
     }
 
-    func testRecoveryWhenRunFinishedWhileClosed() async throws {
+    func testRecoveryDoesNotClaimCompletionWhileClosed() async throws {
         let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 60)])
         let ex = start(run, plan)
         clock.advance(3600)
         let ex2 = RunExecutor(state: ex.state, sink: sink)
         ex2.recoverAfterRestart(wallNow: clock.now, monotonic: clock.monotonic)
-        XCTAssertEqual(ex2.state.status, .completed)
+        XCTAssertEqual(ex2.state.status, .paused)
     }
 
     func testRecoveryWithClockMovedBackwardsDoesNotRewind() async throws {

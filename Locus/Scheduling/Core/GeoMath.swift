@@ -166,3 +166,89 @@ struct Polyline: Codable, Equatable {
         return try? Polyline(sanitizing: pts)
     }
 }
+
+/// Place input that can be interpreted locally before sending a text search to MapKit.
+enum DestinationQuery: Equatable {
+    case coordinates(GeoPoint, name: String?)
+    case text(String)
+    case applePlaceID(String, fallback: GeoPoint?)
+    case shortGoogleLink(URL)
+    case unsupportedLink
+
+    init(_ input: String) {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let point = Self.coordinatePair(value) {
+            self = .coordinates(point, name: nil)
+            return
+        }
+        guard let url = URLComponents(string: value), let scheme = url.scheme?.lowercased() else {
+            self = .text(value)
+            return
+        }
+        let parameters = url.queryItems ?? []
+        func parameter(_ key: String) -> String? { parameters.first { $0.name == key }?.value }
+        let host = url.host?.lowercased() ?? ""
+        if scheme == "geo", let point = Self.coordinatePair(url.path) {
+            self = .coordinates(point, name: nil)
+            return
+        }
+        guard ["https", "http", "maps"].contains(scheme) else {
+            self = .unsupportedLink
+            return
+        }
+        if host == "maps.apple.com" || (scheme == "maps" && host.isEmpty) {
+            let fallback = (parameter("coordinate") ?? parameter("ll")).flatMap(Self.coordinatePair)
+            if let id = parameter("place-id"), !id.isEmpty {
+                self = .applePlaceID(id, fallback: fallback)
+            } else if let query = parameter("destination") ?? parameter("daddr") ?? parameter("query") ?? parameter("q") {
+                if let point = Self.coordinatePair(query) {
+                    self = .coordinates(point, name: nil)
+                } else if let fallback, parameter("q") != nil, parameter("address") == nil, parameter("daddr") == nil {
+                    self = .coordinates(fallback, name: query)
+                } else {
+                    self = .text(query)
+                }
+            } else if let address = parameter("address") {
+                self = .text(address)
+            } else if let fallback {
+                self = .coordinates(fallback, name: parameter("name"))
+            } else {
+                self = .unsupportedLink
+            }
+        } else if host == "maps.app.goo.gl" || (host == "goo.gl" && url.path.hasPrefix("/maps/")) {
+            self = url.url.map(Self.shortGoogleLink) ?? .unsupportedLink
+        } else if Self.isGoogleMapsURL(url) {
+            if let query = parameter("destination") ?? parameter("query") ?? parameter("q") {
+                self = Self.coordinatePair(query).map { .coordinates($0, name: nil) } ?? .text(query)
+            } else if let match = url.path.range(of: #"!3d[-+]?\d+(?:\.\d+)?!4d[-+]?\d+(?:\.\d+)?"#, options: .regularExpression),
+                      let point = Self.coordinatePair(String(url.path[match]).dropFirst(3).replacingOccurrences(of: "!4d", with: ",")) {
+                self = .coordinates(point, name: nil)
+            } else if let range = url.path.range(of: "/place/"),
+                      let name = url.path[range.upperBound...].split(separator: "/").first {
+                self = .text(name.replacingOccurrences(of: "+", with: " "))
+            } else if let range = url.path.range(of: "/@"),
+                      let point = Self.coordinatePair(url.path[range.upperBound...].split(separator: ",").prefix(2).joined(separator: ",")) {
+                self = .coordinates(point, name: nil)
+            } else {
+                self = .unsupportedLink
+            }
+        } else {
+            self = .unsupportedLink
+        }
+    }
+
+    static func isGoogleMapsURL(_ url: URLComponents) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "maps.google.com" ||
+            (["google.com", "www.google.com"].contains(host) && (url.path == "/maps" || url.path.hasPrefix("/maps/")))
+    }
+
+    private static func coordinatePair(_ value: String) -> GeoPoint? {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let lat = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+              let lon = Double(parts[1].trimmingCharacters(in: .whitespaces)) else { return nil }
+        let point = GeoPoint(latitude: lat, longitude: lon)
+        return point.isValid ? point : nil
+    }
+}

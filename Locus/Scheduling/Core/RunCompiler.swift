@@ -224,7 +224,9 @@ struct RunCompiler {
                 }
                 let key = RouteCache.key(from, place.point)
                 let route: RouteResult
-                if let memo = routeMemo[key] {
+                if let selected = run.preferredRoutes?[id], selected.origin == from, selected.destination == place.point {
+                    route = selected.route
+                } else if let memo = routeMemo[key] {
                     route = memo
                 } else {
                     do {
@@ -270,7 +272,7 @@ struct RunCompiler {
                 var rng = SeededGenerator(uuid: id, salt: UInt64(e.iteration))
                 let realism = run.motion.realism ?? .off
                 let stops = DriveRealismPlanner.stops(along: line, reference: reference, realism: realism, using: &rng)
-                let knots = realism.varySpeed ? DriveRealismPlanner.speedKnots(along: line.length, using: &rng) : []
+                let knots = DriveRealismPlanner.speedKnots(along: line.length, using: &rng)
                 let profile = DriveProfile(
                     route: line,
                     reference: reference,

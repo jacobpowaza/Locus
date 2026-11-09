@@ -81,23 +81,26 @@ final class RecordingSink: LocationSink {
     var calls: [Call] = []
     var speeds: [Double] = []
     var failing = false
+    var pending = false
 
     var positions: [GeoPoint] {
         calls.compactMap { if case .set(let p) = $0 { return p } else { return nil } }
     }
     var last: GeoPoint? { positions.last }
 
-    func setSimulatedLocation(_ point: GeoPoint, speed: Double?, heading: Double?) -> Bool {
-        if failing { return false }
+    func deliver(_ point: GeoPoint, speed: Double?, heading: Double?) -> LocationDelivery {
+        if pending { return .pending }
+        if failing { return .failed }
         calls.append(.set(point))
         speeds.append(speed ?? 0)
-        return true
+        return .applied
     }
 
-    func stopSimulation() -> Bool {
-        if failing { return false }
+    func deliverStop() -> LocationDelivery {
+        if pending { return .pending }
+        if failing { return .failed }
         calls.append(.stop)
-        return true
+        return .applied
     }
 }
 

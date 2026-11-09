@@ -57,6 +57,13 @@ struct SetupFlowView: View {
                     removal: .move(edge: .leading).combined(with: .opacity)
                 ))
             }
+            .safeAreaInset(edge: .bottom) {
+                if step != .vpn {
+                    Button("Explore Map First", action: onFinished)
+                        .frame(minHeight: 44)
+                        .padding(.bottom, 4)
+                }
+            }
             .padding(.bottom, 8)
         }
         .preferredColorScheme(.dark)
@@ -327,7 +334,7 @@ struct SetupFlowView: View {
                         tipRow(systemImage: "arrow.down.app.fill", title: "Install", detail: "Get LocalDevVPN from the App Store.")
                         tipRow(systemImage: "power.circle.fill", title: "Connect", detail: "Open it and turn the VPN on. Leave the default IP alone.")
                     }
-                    tipRow(systemImage: "wifi", title: "First teleport on Wi‑Fi", detail: "Start your first teleport while on Wi‑Fi. After that, it can keep working on cellular.")
+                    tipRow(systemImage: "wifi", title: "Connect on Wi‑Fi", detail: "If a new connection fails on cellular, join Wi‑Fi and try again.")
                 }
                 .padding(18)
                 .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))

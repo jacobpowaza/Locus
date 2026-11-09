@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import MapKit
+import Network
 import UIKit
 import UserNotifications
 
@@ -54,11 +55,11 @@ enum SpoofStatus: Equatable {
 
     var label: String {
         switch self {
-        case .idle: return "Not Spoofing"
-        case .connecting: return "Starting…"
-        case .active: return "Spoofing"
-        case .reconnecting: return "Reconnecting…"
-        case .dropped: return "Interrupted"
+        case .idle: return "Ready"
+        case .connecting: return "Connecting"
+        case .active: return "Active"
+        case .reconnecting: return "Reconnecting"
+        case .dropped: return "Connection Failed"
         }
     }
 
@@ -74,9 +75,30 @@ final class SpoofSession: ObservableObject {
     @Published var pin: CLLocationCoordinate2D?
     @Published var simulated: CLLocationCoordinate2D?
     @Published var travelMode: TravelMode = .walk
-    @Published var mapStyleIndex: Int = 0
+    @Published var mapStyleIndex: Int = UserDefaults.standard.integer(forKey: "locus.mapStyle") {
+        didSet { UserDefaults.standard.set(mapStyleIndex, forKey: "locus.mapStyle") }
+    }
     @Published var lastError: String?
-    @Published var isBusy = false
+    @Published private(set) var isBusy = false
+    @Published private(set) var realCoordinate: CLLocationCoordinate2D?
+    @Published private(set) var networkDescription = "Checking"
+    @Published private(set) var connectionDetail: String?
+    private(set) var needsClear = UserDefaults.standard.bool(forKey: "locus.simulationNeedsClear") {
+        didSet {
+            if oldValue != needsClear { UserDefaults.standard.set(needsClear, forKey: "locus.simulationNeedsClear") }
+        }
+    }
+    private let pathMonitor = NWPathMonitor()
+    private var cellularOnly = false
+    private var retryAfter: Date = .distantPast
+    var runOwnsLocation: (() -> Bool)?
+    var canTakeManualControl: (() -> Bool)?
+    var manualActivity: String? {
+        if joystickActive { return "Joystick" }
+        if followingRouteTo != nil { return "Manual route" }
+        if isBusy { return "Location update" }
+        return nil
+    }
     @Published var joystickActive = false
     /// Friendly name of where we're simulating (search result, favorite…).
     @Published var simulatedName: String?
@@ -85,9 +107,9 @@ final class SpoofSession: ObservableObject {
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
+    @Published private(set) var shortcuts: [PlaceShortcut: SavedPlace] = [:]
 
     private var resendTimer: Timer?
-    private var healthTimer: Timer?
     private var joystickTimer: Timer?
     private var routeTask: Task<Void, Never>?
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
@@ -102,8 +124,32 @@ final class SpoofSession: ObservableObject {
     private let recentsKey = "locus.recents"
 
     init() {
+        if needsClear { status = .dropped("Previous simulation may still be active.") }
+        locationKeeper.acceptsActualFixes = !needsClear
+        locationKeeper.onActualLocation = { [weak self] in self?.realCoordinate = $0 }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let wifi = path.usesInterfaceType(.wifi)
+            let cellular = path.usesInterfaceType(.cellular)
+            let text = wifi ? "Wi‑Fi" : (cellular ? "Cellular" : (path.status == .satisfied ? "Other" : "Unavailable"))
+            Task { @MainActor in
+                self?.cellularOnly = cellular && !wifi
+                self?.networkDescription = text
+                self?.retryAfter = .distantPast
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "com.chrismack.locus.path"))
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
+        for shortcut in PlaceShortcut.allCases {
+            shortcuts[shortcut] = SavedPlace.load(key: shortcut.key).first
+                ?? favorites.first { $0.name.caseInsensitiveCompare(shortcut.rawValue) == .orderedSame }
+        }
+    }
+
+    func setShortcut(_ shortcut: PlaceShortcut, place: MapPlace) {
+        let value = SavedPlace(name: place.name, latitude: place.coordinate.latitude, longitude: place.coordinate.longitude)
+        shortcuts[shortcut] = value
+        SavedPlace.save([value], key: shortcut.key)
     }
 
     var isSpoofing: Bool {
@@ -112,19 +158,34 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
-    func teleport(to coordinate: CLLocationCoordinate2D, name: String? = nil, pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
-            lastError = Self.notPairedMessage
-            return
-        }
+    func teleport(to coordinate: CLLocationCoordinate2D, name: String? = nil, pairing: PairingStore) async -> Bool {
+        guard canControlManually(), checkPairing(pairing) else { return false }
         onManualControl?("teleport")
         cancelRoute()
         if joystickActive { stopJoystick() }
         pin = coordinate
-        if apply(coordinate, pairing: pairing, markRecent: name == nil) {
-            simulatedName = name
-            if let name { pushNamedRecent(name: name, coordinate: coordinate) }
+        guard await apply(coordinate, pairing: pairing, markRecent: name == nil) else { return false }
+        simulatedName = name
+        if let name { pushNamedRecent(name: name, coordinate: coordinate) }
+        return true
+    }
+
+    private func canControlManually() -> Bool {
+        if isBusy || canTakeManualControl?() == false {
+            lastError = "A location update is in progress. Try again in a moment."
+            return false
         }
+        return true
+    }
+
+    private func checkPairing(_ pairing: PairingStore, showError: Bool = true) -> Bool {
+        #if !targetEnvironment(simulator)
+        guard pairing.hasPairingFile else {
+            if showError { lastError = Self.notPairedMessage }
+            return false
+        }
+        #endif
+        return true
     }
 
     static let notPairedMessage = "Locus isn't connected to this iPhone yet. Open Settings › Connection to finish setup."
@@ -135,89 +196,75 @@ final class SpoofSession: ObservableObject {
         followingRouteTo = nil
     }
 
-    func stop(pairing: PairingStore) {
+    @discardableResult
+    func stop(pairing: PairingStore) async -> Bool {
         onManualControl?("stop")
-        performStop()
+        return await performStop(pairing: pairing)
     }
 
-    @discardableResult
-    private func performStop() -> Bool {
+    private func performStop(pairing: PairingStore) async -> Bool {
+        guard !isBusy else { return false }
         cancelRoute()
         stopJoystick()
         stopResend()
-        stopHealth()
+        guard needsClear || simulated != nil else {
+            status = .idle
+            return true
+        }
         isBusy = true
-        let result = LocationEngine.clear()
+        let result = await LocationEngine.clear(pairingPath: pairing.pairingPath, deviceIP: TunnelConfig.targetIP)
         isBusy = false
+        endBackground()
+        locationKeeper.start()
         switch result {
         case .success:
             simulated = nil
             simulatedName = nil
+            needsClear = false
             status = .idle
-            endBackground()
-            // Keep location updates running so the map puck / locate button
-            // can return to the real GPS fix (not the leftover pin).
-            locationKeeper.start()
+            connectionDetail = nil
+            locationKeeper.acceptsActualFixes = true
             return true
         case .failure(let error):
-            lastError = error.localizedDescription
-            status = .dropped(error.localizedDescription)
-            postDropNotification(error.localizedDescription)
+            let message = "Couldn’t confirm the location was restored. \(connectionMessage(error))"
+            connectionDetail = "\(error)"
+            lastError = message
+            status = .dropped(message)
             return false
         }
     }
 
-    // MARK: - Scheduled Runs automation
+    // MARK: - Automated Runs
 
-    /// Moves the simulated location for a Scheduled Run. Unlike `teleport`,
-    /// this doesn't count as manual control or touch recents.
-    func automationSet(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore) -> Bool {
-        #if !targetEnvironment(simulator)
-        guard pairing.hasPairingFile else { return false }
-        #endif
-        if joystickActive { stopJoystick() }
-        if routeTask != nil { cancelRoute() }
-        if simulatedName != nil { simulatedName = nil }
-        return apply(coordinate, pairing: pairing, markRecent: false, surfaceErrors: false)
+    func automationSet(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore) async -> Bool {
+        guard !isBusy, checkPairing(pairing, showError: false) else { return false }
+        return await apply(coordinate, pairing: pairing, markRecent: false, surfaceErrors: false, drive: true)
     }
 
-    /// Ends simulation for a Scheduled Run's Stop Spoofing step.
-    func automationStop(pairing: PairingStore) -> Bool {
-        guard simulated != nil || isSpoofing else { return true }
-        return performStop()
-    }
+    func automationStop(pairing: PairingStore) async -> Bool { await performStop(pairing: pairing) }
 
-    /// Best-known real device coordinate (not the teleport pin).
-    var realCoordinate: CLLocationCoordinate2D? {
-        locationKeeper.lastKnownCoordinate
-    }
-
-    /// Start lightweight GPS updates for the map puck / locate button.
-    func startLocationUpdates() {
-        locationKeeper.start()
-    }
+    func startLocationUpdates() { locationKeeper.start(inBackground: isSpoofing) }
 
     func startJoystick(pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
-            lastError = Self.notPairedMessage
-            return
-        }
+        guard canControlManually(), checkPairing(pairing) else { return }
         onManualControl?("joystick")
         cancelRoute()
         simulatedName = nil
-        let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
+        let start = simulated ?? pin ?? realCoordinate
         guard let start else {
-            lastError = "Locus can't find your location yet. Teleport somewhere first, then use the joystick."
+            lastError = "Locus can’t find your location yet. Choose a starting point on the map."
             return
         }
-        if simulated == nil {
-            apply(start, pairing: pairing, markRecent: false)
-        }
         joystickActive = true
-        joystickTimer?.invalidate()
-        joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.tickJoystick(pairing: pairing)
+        Task {
+            if simulated == nil, !(await apply(start, pairing: pairing, markRecent: false)) {
+                stopJoystick()
+                return
+            }
+            guard joystickActive else { return }
+            joystickTimer?.invalidate()
+            joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                Task { @MainActor in await self?.tickJoystick(pairing: pairing) }
             }
         }
     }
@@ -239,11 +286,7 @@ final class SpoofSession: ObservableObject {
         destinationName: String? = nil,
         pairing: PairingStore
     ) {
-        guard pairing.hasPairingFile else {
-            lastError = Self.notPairedMessage
-            return
-        }
-        guard coordinates.count >= 2 else { return }
+        guard canControlManually(), checkPairing(pairing), coordinates.count >= 2 else { return }
         onManualControl?("route")
         routeTask?.cancel()
         stopJoystick()
@@ -253,8 +296,9 @@ final class SpoofSession: ObservableObject {
         routeTask = Task { [weak self] in
             guard let self else { return }
             var previous = coordinates[0]
-            await MainActor.run {
-                _ = self.apply(previous, pairing: pairing, markRecent: true)
+            guard await self.apply(previous, pairing: pairing, markRecent: true) else {
+                if !Task.isCancelled { self.followingRouteTo = nil; self.routeTask = nil }
+                return
             }
             for next in coordinates.dropFirst() {
                 if Task.isCancelled { break }
@@ -273,17 +317,18 @@ final class SpoofSession: ObservableObject {
                     )
                     let delay = stepMeters / speed
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await MainActor.run {
-                        _ = self.apply(coord, pairing: pairing, markRecent: false)
+                    guard !Task.isCancelled else { return }
+                    guard await self.apply(coord, pairing: pairing, markRecent: false) else {
+                        if !Task.isCancelled { self.followingRouteTo = nil; self.routeTask = nil }
+                        return
                     }
                 }
                 previous = next
             }
             if !Task.isCancelled {
-                await MainActor.run {
-                    self.followingRouteTo = nil
-                    self.simulatedName = destinationName
-                }
+                self.followingRouteTo = nil
+                self.simulatedName = destinationName
+                self.routeTask = nil
             }
         }
     }
@@ -363,13 +408,17 @@ final class SpoofSession: ObservableObject {
         _ coordinate: CLLocationCoordinate2D,
         pairing: PairingStore,
         markRecent: Bool,
-        surfaceErrors: Bool = true
-    ) -> Bool {
-        if status == .idle || status.isDropped {
-            status = .connecting
-        }
+        surfaceErrors: Bool = true,
+        drive: Bool = false,
+        resend: Bool = false
+    ) async -> Bool {
+        guard !isBusy else { return false }
+        let previous = status
+        if status == .idle { status = .connecting }
+        else if status.isDropped { status = .reconnecting }
         isBusy = true
-        let result = LocationEngine.set(
+        locationKeeper.acceptsActualFixes = false
+        let result = await LocationEngine.set(
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             pairingPath: pairing.pairingPath,
@@ -379,55 +428,62 @@ final class SpoofSession: ObservableObject {
         switch result {
         case .success:
             simulated = coordinate
-            pin = coordinate
+            needsClear = true
+            if !drive && !resend { pin = coordinate }
+            if drive && !resend { simulatedName = nil }
             status = .active
+            connectionDetail = nil
             lastError = nil
+            retryAfter = .distantPast
             beginBackground()
-            locationKeeper.start()
+            locationKeeper.start(inBackground: true)
             startResend(pairing: pairing)
-            startHealth(pairing: pairing)
-            if markRecent {
-                pushRecent(coordinate)
-            }
+            if markRecent { pushRecent(coordinate) }
             return true
         case .failure(let error):
-            // Scheduled runs report failures in their own log/UI instead of
-            // an alert on every retry.
-            if surfaceErrors { lastError = error.localizedDescription }
-            if simulated != nil {
-                if !status.isDropped { postDropNotification(error.localizedDescription) }
-                status = .dropped(error.localizedDescription)
-            } else {
-                status = .idle
-            }
+            let message = connectionMessage(error)
+            connectionDetail = "\(error) on \(networkDescription)"
+            if surfaceErrors { lastError = message }
+            if simulated != nil && previous == .active { postDropNotification(message) }
+            status = .dropped(message)
+            locationKeeper.acceptsActualFixes = !needsClear
+            retryAfter = Date().addingTimeInterval(2)
             return false
         }
     }
 
-    private func tickJoystick(pairing: PairingStore) {
-        guard joystickActive, let current = simulated else { return }
+    private func connectionMessage(_ error: LocationEngineError) -> String {
+        if case .tunnelCreate = error {
+            if cellularOnly {
+                return "Couldn’t start a connection over cellular. Join Wi‑Fi, connect the helper in Settings, and try again."
+            }
+            return "Couldn’t reach this iPhone’s location service. Check the connection in Settings and try again."
+        }
+        return error.localizedDescription
+    }
+
+    func canRetryConnection() -> Bool { Date() >= retryAfter }
+
+    private func tickJoystick(pairing: PairingStore) async {
+        guard joystickActive, !isBusy, canRetryConnection(), let current = simulated else { return }
         let magnitude = hypot(joystickVector.dx, joystickVector.dy)
         guard magnitude > 0.08 else { return }
         let nx = joystickVector.dx / magnitude
         let ny = -joystickVector.dy / magnitude
         let speed = travelMode.baseSpeed * min(1.0, magnitude) * Double.random(in: 0.9...1.1)
-        let dt = 0.25
-        let meters = speed * dt
+        let meters = speed * 0.25
         let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)
-        apply(next, pairing: pairing, markRecent: false)
+        await apply(next, pairing: pairing, markRecent: false)
     }
 
     private func startResend(pairing: PairingStore) {
-        resendTimer?.invalidate()
+        stopResend()
         resendTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let sim = self.simulated else { return }
-                _ = LocationEngine.set(
-                    latitude: sim.latitude,
-                    longitude: sim.longitude,
-                    pairingPath: pairing.pairingPath,
-                    deviceIP: TunnelConfig.targetIP
-                )
+                guard let self, !self.isBusy, self.canRetryConnection(), let point = self.simulated else { return }
+                // The executor owns reconnect and position delivery during a run.
+                guard self.runOwnsLocation?() != true || self.status == .active else { return }
+                await self.apply(point, pairing: pairing, markRecent: false, surfaceErrors: false, resend: true)
             }
         }
     }
@@ -435,27 +491,6 @@ final class SpoofSession: ObservableObject {
     private func stopResend() {
         resendTimer?.invalidate()
         resendTimer = nil
-    }
-
-    private func startHealth(pairing: PairingStore) {
-        healthTimer?.invalidate()
-        healthTimer = Timer.scheduledTimer(withTimeInterval: 12, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let sim = self.simulated else { return }
-                if case .dropped = self.status {
-                    self.status = .reconnecting
-                    self.apply(sim, pairing: pairing, markRecent: false)
-                } else if !LocationEngine.isSessionActive, self.isSpoofing {
-                    self.status = .reconnecting
-                    self.apply(sim, pairing: pairing, markRecent: false)
-                }
-            }
-        }
-    }
-
-    private func stopHealth() {
-        healthTimer?.invalidate()
-        healthTimer = nil
     }
 
     private func pushRecent(_ coordinate: CLLocationCoordinate2D) {

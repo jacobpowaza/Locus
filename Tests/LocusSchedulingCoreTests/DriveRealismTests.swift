@@ -94,11 +94,15 @@ final class DriveRealismTests: XCTestCase {
         XCTAssertGreaterThan(knots.count, 2)
         var noTurns = MotionSettings.standard
         noTurns.slowForTurns = false
-        let p = DriveProfile(route: line, reference: ref(13), policy: .constant(20), motion: noTurns, speedKnots: knots)
+        let p = DriveProfile(route: line, reference: ref(20), policy: .variable, motion: noTurns, speedKnots: knots)
         XCTAssertLessThanOrEqual(p.maxSpeed, 20 * 1.08 + 1e-6)
         let speeds = stride(from: 20.0, to: p.duration - 20, by: 2).map { p.state(at: $0).speed }
         XCTAssertGreaterThan((speeds.max() ?? 0) - (speeds.min() ?? 0), 0.3, "speed should actually vary")
         XCTAssertGreaterThan(speeds.min() ?? 0, 20 * 0.92 - 0.5)
+
+        let fixed = p.withPolicy(.constant(20))
+        XCTAssertEqual(fixed.state(at: 45).speed, 20, accuracy: 0.01)
+        XCTAssertEqual(fixed.state(at: 80).speed, 20, accuracy: 0.01)
     }
 
     func testPlannerIsDeterministicForTheSameSeed() throws {

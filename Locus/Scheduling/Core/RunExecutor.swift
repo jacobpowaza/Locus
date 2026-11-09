@@ -3,12 +3,13 @@ import Foundation
 /// Where executed positions go. The app implements this on top of
 /// SpoofSession / LocationEngine; tests record calls.
 protocol LocationSink: AnyObject {
-    /// Set the simulated location. `speed`/`heading` are informational: the
-    /// DVT location-simulation service only accepts a coordinate, so iOS
-    /// derives speed/course itself from successive fixes.
-    func setSimulatedLocation(_ point: GeoPoint, speed: Double?, heading: Double?) -> Bool
-    /// End simulation; the device returns to real GPS.
-    func stopSimulation() -> Bool
+    /// Speed and heading are informational. The DVT service accepts coordinates.
+    func deliver(_ point: GeoPoint, speed: Double?, heading: Double?) -> LocationDelivery
+    func deliverStop() -> LocationDelivery
+}
+
+enum LocationDelivery {
+    case applied, pending, failed
 }
 
 enum ExecutionStatus: String, Codable, Equatable {
@@ -50,6 +51,7 @@ struct ExecutionState: Codable, Equatable {
     /// Last segment whose start was logged (avoids duplicate log lines on resume).
     var announcedIndex: Int = -1
     var log: [ExecutionLogEntry] = []
+    var startConfirmed: Bool? = nil
 
     static let maxLogEntries = 500
 }
@@ -101,6 +103,11 @@ final class RunExecutor {
     private var sent: Sent = .unknown
     private var lastMonotonic: Double?
     private var sinkFailingSince: Date?
+    private var pendingSince: Date?
+    private var awaitingDelivery = false
+    private var pendingDriveAdvance: Double?
+    private var stopRequested = false
+    private var skipRequested = false
 
     /// Pause the run if the sink keeps failing this long.
     var sinkFailureGrace: Double = 30
@@ -140,7 +147,6 @@ final class RunExecutor {
         let ex = RunExecutor(state: state, sink: sink)
         ex.logObserver = logObserver
         ex.lastMonotonic = monotonic
-        ex.log(.info, "Started \(trigger == .scheduled ? "scheduled" : "manual") run with \(plan.segments.count) steps.", wallNow)
         ex.advance(wallNow: wallNow, monotonic: monotonic)
         return ex
     }
@@ -151,59 +157,58 @@ final class RunExecutor {
     func advance(wallNow: Date, monotonic: Double) {
         let dt = max(0, monotonic - (lastMonotonic ?? monotonic))
         lastMonotonic = monotonic
-        guard state.status == .running else {
-            state.lastWall = wallNow
+        defer { state.lastWall = wallNow }
+        if stopRequested {
+            cancel(stopSpoofing: true, wallNow: wallNow)
             return
         }
-        if dt > catchUpLogThreshold {
-            log(.info, "Caught up \(DurationText.short(dt)) after Locus was suspended.", wallNow)
+        if skipRequested {
+            skip(wallNow: wallNow, monotonic: monotonic)
+            return
         }
-        step(dt: dt, wallNow: wallNow)
-        state.lastWall = wallNow
-        emit(wallNow: wallNow)
+        guard state.status == .running else { return }
+        if dt > catchUpLogThreshold {
+            log(.warning, "Locus was suspended. Playback continues from the last confirmed position.", wallNow)
+        }
+        step(dt: dt > catchUpLogThreshold || sinkFailingSince != nil ? 0 : dt, wallNow: wallNow)
     }
 
-    /// After an app restart: replay elapsed wall time without touching the
-    /// sink, then pause so the user can review before spoofing resumes.
+    /// A checkpoint represents confirmed output. Preserve it and wait for
+    /// the user to resume before applying any further location actions.
     func recoverAfterRestart(wallNow: Date, monotonic: Double) {
         lastMonotonic = monotonic
         sent = .unknown
         guard state.status == .running || state.status == .paused else { return }
-        let wasRunning = state.status == .running
-        let gap = wallNow.timeIntervalSince(state.lastWall)
-        if wasRunning {
-            // A negative gap means the clock moved backwards; don't rewind.
-            step(dt: max(0, gap), wallNow: wallNow)
-        }
         state.lastWall = wallNow
-        if !state.status.isFinished {
-            state.status = .paused
-            state.pauseReason = "Locus was closed while this run was \(wasRunning ? "running" : "paused")."
-            log(.warning, wasRunning
-                ? "Recovered after Locus restarted (\(DurationText.short(max(0, gap))) later). Moved to where the schedule is now and paused."
-                : "Recovered paused run after Locus restarted.", wallNow)
-        } else {
-            log(.info, "Run finished while Locus was closed.", wallNow)
-        }
+        state.status = .paused
+        state.pauseReason = "Locus was closed. Resume from the last saved step."
+        log(.warning, "Recovered after Locus restarted. Paused at the last checkpoint.", wallNow)
     }
 
     private func step(dt: Double, wallNow: Date) {
-        var remaining = dt
+        var remaining = awaitingDelivery || sinkFailingSince != nil ? 0 : dt
         let segs = state.plan.segments
         while state.index < segs.count, state.status == .running {
             let seg = state.plan.segments[state.index]
             switch seg.kind {
             case .teleport(let place):
+                guard send(.at(place.point), speed: 0, wallNow: wallNow) else { return }
+                confirmStart(wallNow)
                 log(.info, "Set location to \(place.name).", wallNow.addingTimeInterval(-remaining))
                 enterNext()
             case .setSpeed(let policy):
+                confirmStart(wallNow)
                 state.speedPolicy = policy
                 log(.info, "Speed: \(policy.summary(unit: .mph)).", wallNow.addingTimeInterval(-remaining))
                 enterNext()
             case .stop:
+                guard send(.stopped, wallNow: wallNow) else { return }
+                confirmStart(wallNow)
                 log(.info, "Turned off Locus.", wallNow.addingTimeInterval(-remaining))
                 enterNext()
             case .hold(let seconds):
+                if let point = seg.location, !send(.at(point), speed: 0, wallNow: wallNow) { return }
+                confirmStart(wallNow)
                 let left = seconds - state.elapsedInSegment
                 if remaining >= left {
                     remaining -= max(0, left)
@@ -216,6 +221,8 @@ final class RunExecutor {
                     return
                 }
             case .waitUntil(let target):
+                if let point = seg.location, !send(.at(point), speed: 0, wallNow: wallNow) { return }
+                confirmStart(wallNow)
                 let entry = wallNow.addingTimeInterval(-remaining)
                 if target <= entry {
                     let late = entry.timeIntervalSince(target)
@@ -235,21 +242,27 @@ final class RunExecutor {
                     return
                 }
             case .drive(let leg):
+                let left = max(0, leg.profile.duration - state.elapsedInSegment)
+                let increment = pendingDriveAdvance ?? min(remaining, left)
+                let next = leg.profile.state(at: state.elapsedInSegment + increment)
+                guard send(.at(next.position), speed: next.speed, heading: next.heading, wallNow: wallNow) else {
+                    pendingDriveAdvance = increment
+                    return
+                }
+                pendingDriveAdvance = nil
+                confirmStart(wallNow)
                 if state.announcedIndex != state.index {
                     state.announcedIndex = state.index
-                    log(.info, "Driving to \(leg.destination.name) — \(Self.km(leg.profile.distance)), about \(DurationText.short(leg.profile.duration)).", wallNow.addingTimeInterval(-remaining))
+                    log(.info, "Driving to \(leg.destination.name) — \(Self.km(leg.profile.distance)), about \(DurationText.short(leg.profile.duration)).", wallNow)
                 }
-                let left = leg.profile.duration - state.elapsedInSegment
-                if remaining >= left {
-                    remaining -= max(0, left)
-                    state.activeElapsed += max(0, left)
+                state.elapsedInSegment += increment
+                state.activeElapsed += increment
+                if increment >= left {
+                    remaining = max(0, remaining - increment)
                     state.distanceBanked += leg.profile.distance
-                    log(.info, "Arrived at \(leg.destination.name).", wallNow.addingTimeInterval(-remaining))
+                    log(.info, "Arrived at \(leg.destination.name).", wallNow)
                     enterNext()
                 } else {
-                    state.elapsedInSegment += remaining
-                    state.activeElapsed += remaining
-                    remaining = 0
                     return
                 }
             }
@@ -259,6 +272,12 @@ final class RunExecutor {
             state.endedAt = wallNow.addingTimeInterval(-remaining)
             log(.info, "Run completed.", state.endedAt ?? wallNow)
         }
+    }
+
+    private func confirmStart(_ now: Date) {
+        guard state.startConfirmed != true else { return }
+        state.startConfirmed = true
+        log(.info, "Started \(state.trigger == .scheduled ? "scheduled" : "manual") run with \(state.plan.segments.count) steps.", now)
     }
 
     private func enterNext() {
@@ -290,31 +309,43 @@ final class RunExecutor {
         }
     }
 
-    private func emit(wallNow: Date) {
-        guard let sink else { return }
-        let ok: Bool
-        if let d = desiredPosition {
-            if case .at(let p) = sent, p == d.point { return }
-            ok = sink.setSimulatedLocation(d.point, speed: d.speed, heading: d.heading)
-            if ok { sent = .at(d.point) }
-        } else {
-            if sent == .stopped || sent == .unknown { return }
-            ok = sink.stopSimulation()
-            if ok { sent = .stopped }
+    @discardableResult
+    private func send(_ target: Sent, speed: Double? = nil, heading: Double? = nil, wallNow: Date) -> Bool {
+        if sent == target && !awaitingDelivery && sinkFailingSince == nil { return true }
+        guard let sink else { return true }
+        let result: LocationDelivery
+        switch target {
+        case .at(let point): result = sink.deliver(point, speed: speed, heading: heading)
+        case .stopped: result = sink.deliverStop()
+        case .unknown: return true
         }
-        if ok {
-            if sinkFailingSince != nil {
-                log(.info, "Spoofing connection restored.", wallNow)
-            }
+        awaitingDelivery = result == .pending
+        if result != .pending { pendingSince = nil }
+        switch result {
+        case .applied:
+            sent = target
+            if sinkFailingSince != nil { log(.info, "Simulation connection restored.", wallNow) }
             sinkFailingSince = nil
-        } else if let since = sinkFailingSince {
-            if wallNow.timeIntervalSince(since) >= sinkFailureGrace {
-                pause(reason: "Lost the connection. Check LocalDevVPN, then resume.", wallNow: wallNow)
-                sinkFailingSince = nil
+            return true
+        case .pending:
+            if pendingSince == nil { pendingSince = wallNow }
+            return false
+        case .failed:
+            if let since = sinkFailingSince {
+                if wallNow.timeIntervalSince(since) >= sinkFailureGrace {
+                    if stopRequested {
+                        stopRequested = false
+                        fail("Couldn’t confirm that the simulated location was cleared.", wallNow: wallNow)
+                    } else {
+                        skipRequested = false
+                        pause(reason: "Lost the connection. Check LocalDevVPN, then resume.", wallNow: wallNow)
+                    }
+                }
+            } else {
+                sinkFailingSince = wallNow
+                log(.warning, "Couldn’t update the simulated location. Retrying.", wallNow)
             }
-        } else {
-            sinkFailingSince = wallNow
-            log(.warning, "Couldn't update the simulated location; retrying.", wallNow)
+            return false
         }
     }
 
@@ -329,10 +360,7 @@ final class RunExecutor {
         state.pauseReason = reason
         state.lastWall = wallNow
         log(reason == nil ? .info : .warning, reason.map { "Paused: \($0)" } ?? "Paused.", wallNow)
-        // Stand still where we are.
-        if let d = desiredPosition, let sink {
-            if sink.setSimulatedLocation(d.point, speed: 0, heading: d.heading) { sent = .at(d.point) }
-        }
+
     }
 
     func resume(wallNow: Date, monotonic: Double) {
@@ -340,7 +368,7 @@ final class RunExecutor {
         // A paused car restarts from standstill: re-solve the rest of the leg.
         if state.index < state.plan.segments.count,
            case .drive(var leg) = state.plan.segments[state.index].kind,
-           state.elapsedInSegment > 0 {
+           state.elapsedInSegment > 0, pendingDriveAdvance == nil {
             let travelled = leg.profile.state(at: state.elapsedInSegment).distanceTravelled
             if let rest = leg.profile.remainder(from: state.elapsedInSegment, initialSpeed: 0) {
                 state.distanceBanked += travelled
@@ -353,40 +381,39 @@ final class RunExecutor {
         state.pauseReason = nil
         lastMonotonic = monotonic
         sent = .unknown
+        sinkFailingSince = nil
         log(.info, "Resumed.", wallNow)
         step(dt: 0, wallNow: wallNow)
         state.lastWall = wallNow
-        emit(wallNow: wallNow)
     }
 
-    /// Finish the current step immediately (a drive jumps to its destination).
+    /// Explicitly skipping a drive applies its endpoint before advancing.
     func skip(wallNow: Date, monotonic: Double) {
         guard !state.status.isFinished, state.index < state.plan.segments.count else { return }
         let seg = state.plan.segments[state.index]
+        skipRequested = true
         if case .drive(let leg) = seg.kind {
+            guard send(.at(leg.profile.polyline.end), speed: 0, wallNow: wallNow) else { return }
             state.distanceBanked += leg.profile.distance
-            log(.info, "Skipped drive — jumped to \(leg.destination.name).", wallNow)
-        } else {
-            log(.info, "Skipped: \(seg.summary).", wallNow)
         }
+        skipRequested = false
+        pendingDriveAdvance = nil
+        log(.info, "Skipped: \(seg.summary).", wallNow)
         enterNext()
         lastMonotonic = monotonic
-        if state.status == .running {
-            step(dt: 0, wallNow: wallNow)
-            emit(wallNow: wallNow)
-        } else if let d = desiredPosition, let sink, sink.setSimulatedLocation(d.point, speed: 0, heading: d.heading) {
-            sent = .at(d.point)
-        }
+        if state.status == .running { step(dt: 0, wallNow: wallNow) }
         state.lastWall = wallNow
     }
 
     func cancel(stopSpoofing: Bool, wallNow: Date) {
         guard !state.status.isFinished else { return }
+        stopRequested = stopSpoofing
+        if stopSpoofing && !send(.stopped, wallNow: wallNow) { return }
+        stopRequested = false
         state.status = .cancelled
         state.endedAt = wallNow
         state.pauseReason = nil
-        log(.info, stopSpoofing ? "Ended and returned to the real location." : "Ended. Staying at the current simulated location.", wallNow)
-        if stopSpoofing, let sink, sink.stopSimulation() { sent = .stopped }
+        log(.info, stopSpoofing ? "Ended and cleared the simulated location." : "Ended at the last confirmed location.", wallNow)
     }
 
     func fail(_ message: String, wallNow: Date) {
@@ -401,7 +428,7 @@ final class RunExecutor {
     /// inherit the run's speed (until the next Set Speed step). Drives with
     /// their own Custom Speed are left alone.
     func changeSpeed(to policy: SpeedPolicy, wallNow: Date) {
-        guard !state.status.isFinished else { return }
+        guard !state.status.isFinished, pendingDriveAdvance == nil else { return }
         state.speedPolicy = policy
         var i = state.index
         while i < state.plan.segments.count {
@@ -430,6 +457,8 @@ final class RunExecutor {
 
     /// Seconds until the executor next needs a tick.
     func nextWakeDelay(wallNow: Date) -> Double {
+        if awaitingDelivery { return 0.25 }
+        if stopRequested || skipRequested || (state.status == .running && sinkFailingSince != nil) { return 2 }
         guard state.status == .running, state.index < state.plan.segments.count else { return 30 }
         switch state.plan.segments[state.index].kind {
         case .drive: return 1
@@ -487,7 +516,7 @@ final class RunExecutor {
             segmentIndex: state.index,
             segmentCount: segs.count,
             position: d?.point,
-            speed: paused ? 0 : (d?.speed ?? 0),
+            speed: paused || sinkFailingSince != nil ? 0 : (d?.speed ?? 0),
             heading: d?.heading,
             referenceSpeed: ref,
             referenceSource: refSource,
@@ -500,7 +529,7 @@ final class RunExecutor {
             distanceDriven: state.distanceBanked + currentLegDriven,
             distanceRemaining: currentLegLeft + later,
             projected: projected,
-            connectionProblem: sinkFailingSince != nil,
+            connectionProblem: sinkFailingSince != nil || (pendingSince.map { wallNow.timeIntervalSince($0) > 2 } ?? false),
             stoppedFor: state.status == .running ? stoppedFor : nil
         )
     }

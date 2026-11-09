@@ -17,7 +17,9 @@ enum LocalDevVPN {
     static var isConnected: Bool {
         let addresses = ipv4InterfaceAddresses()
         let target = TunnelConfig.targetIP
+        // This detects a candidate interface, not reachability of the peer.
         if addresses.contains(target) { return true }
+        if target == TunnelConfig.defaultIP, addresses.contains("10.7.1.1") { return true }
 
         let parts = target.split(separator: ".")
         guard parts.count == 4 else { return false }
@@ -51,11 +53,12 @@ enum LocalDevVPN {
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
         while let current = ptr {
             let interface = current.pointee
-            if interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) {
+            if String(cString: interface.ifa_name).hasPrefix("utun"),
+               let address = interface.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) {
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 let nameLen = socklen_t(MemoryLayout<sockaddr_in>.size)
                 if getnameinfo(
-                    interface.ifa_addr,
+                    address,
                     nameLen,
                     &host,
                     socklen_t(host.count),

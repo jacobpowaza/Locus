@@ -28,26 +28,10 @@ extension PlaceRef {
 /// `speedLimits` is nil and drives use the labelled route-average fallback.
 final class MapKitRouteProvider: RouteProvider {
     func route(from: GeoPoint, to: GeoPoint) async throws -> RouteResult {
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: from.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: to.coordinate))
-        request.transportType = .automobile
-        request.requestsAlternateRoutes = false
-        let response: MKDirections.Response
-        do {
-            response = try await MKDirections(request: request).calculate()
-        } catch {
-            throw RouteProviderError.unavailable(error.localizedDescription)
+        guard let route = try await RouteBuilder.routes(from: from, to: to).first else {
+            throw RouteProviderError.noRoute
         }
-        guard let route = response.routes.first else { throw RouteProviderError.noRoute }
-        // Raw vertices; the core densifies for motion. 50 m keeps curves.
-        let coords = RouteBuilder.sample(polyline: route.polyline, every: 50)
-        return RouteResult(
-            points: coords.map(GeoPoint.init),
-            expectedTravelTime: route.expectedTravelTime,
-            speedLimits: nil,
-            providerName: "Apple Maps"
-        )
+        return route
     }
 }
 
@@ -55,26 +39,48 @@ final class MapKitRouteProvider: RouteProvider {
 /// reconnection, resend and background keep-alive all keep working.
 @MainActor
 final class SpoofSessionSink: LocationSink {
-    weak var session: SpoofSession?
-    weak var pairing: PairingStore?
+    private enum Command: Equatable { case set(GeoPoint), stop }
+    private weak var session: SpoofSession?
+    private weak var pairing: PairingStore?
+    private var inFlight = false
+    private var completed: (Command, LocationDelivery)?
+    var onReady: (() -> Void)?
 
     init(session: SpoofSession, pairing: PairingStore) {
         self.session = session
         self.pairing = pairing
     }
 
-    nonisolated func setSimulatedLocation(_ point: GeoPoint, speed: Double?, heading: Double?) -> Bool {
-        MainActor.assumeIsolated {
-            guard let session, let pairing else { return false }
-            return session.automationSet(point.coordinate, pairing: pairing)
-        }
+    nonisolated func deliver(_ point: GeoPoint, speed: Double?, heading: Double?) -> LocationDelivery {
+        MainActor.assumeIsolated { submit(.set(point)) }
     }
 
-    nonisolated func stopSimulation() -> Bool {
-        MainActor.assumeIsolated {
-            guard let session, let pairing else { return false }
-            return session.automationStop(pairing: pairing)
+    nonisolated func deliverStop() -> LocationDelivery {
+        MainActor.assumeIsolated { submit(.stop) }
+    }
+
+    func invalidateCompletion() { completed = nil }
+
+    private func submit(_ command: Command) -> LocationDelivery {
+        guard let session, let pairing else { return .failed }
+        if let result = completed {
+            completed = nil
+            if result.0 == command { return result.1 }
         }
+        guard !inFlight, !session.isBusy else { return .pending }
+        if case .set = command, !session.canRetryConnection() { return .failed }
+        inFlight = true
+        Task {
+            let ok: Bool
+            switch command {
+            case .set(let point): ok = await session.automationSet(point.coordinate, pairing: pairing)
+            case .stop: ok = await session.automationStop(pairing: pairing)
+            }
+            inFlight = false
+            completed = (command, ok ? .applied : .failed)
+            onReady?()
+        }
+        return .pending
     }
 }
 
@@ -84,18 +90,21 @@ final class UserNotificationRunNotifier: RunNotifier {
     private func id(_ runID: UUID) -> String { "locus.run.reminder.\(runID.uuidString)" }
 
     func requestAuthorization() {
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound]) { _, error in
+            if let error { NSLog("[Locus][Notifications] Authorization: %@", error.localizedDescription) }
+        }
     }
 
     func scheduleStartReminder(runID: UUID, runName: String, at date: Date) {
         let content = UNMutableNotificationContent()
-        content.title = "\(runName) is waiting"
-        content.body = "Locus wasn't running at the start time. Open Locus to start it."
+        content.title = "\(runName) is scheduled"
+        content.body = "Open Locus to check this run or start it manually."
+        content.userInfo = ["runID": runID.uuidString]
         content.sound = .default
         if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
         let interval = max(1, date.timeIntervalSinceNow)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        center.add(UNNotificationRequest(identifier: id(runID), content: content, trigger: trigger))
+        add(UNNotificationRequest(identifier: id(runID), content: content, trigger: trigger))
     }
 
     func cancelStartReminder(runID: UUID) {
@@ -107,6 +116,12 @@ final class UserNotificationRunNotifier: RunNotifier {
         content.title = title
         content.body = body
         content.sound = .default
-        center.add(UNNotificationRequest(identifier: "locus.run.\(UUID().uuidString)", content: content, trigger: nil))
+        add(UNNotificationRequest(identifier: "locus.run.\(UUID().uuidString)", content: content, trigger: nil))
+    }
+
+    private func add(_ request: UNNotificationRequest) {
+        center.add(request) { error in
+            if let error { NSLog("[Locus][Notifications] Delivery request: %@", error.localizedDescription) }
+        }
     }
 }

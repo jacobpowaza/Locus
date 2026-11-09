@@ -25,3 +25,12 @@ struct SavedPlace: Identifiable, Codable, Equatable {
         }
     }
 }
+
+
+enum PlaceShortcut: String, CaseIterable, Identifiable {
+    case home = "Home", work = "Work"
+
+    var id: String { rawValue }
+    var key: String { "locus.shortcut.\(rawValue.lowercased())" }
+    var symbol: String { self == .home ? "house.fill" : "briefcase.fill" }
+}

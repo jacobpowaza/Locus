@@ -40,6 +40,10 @@ final class ScheduledRunsController: ObservableObject {
     private static let drivePrefsKey = "locus.drivePrefs"
 
     private let coordinator: RunCoordinator
+    private let routeProvider: CachingRouteProvider
+    private var lastDrive: ScheduledRun?
+    var savedRoutes: [ScheduledRun] { runs.filter { $0.isSavedRoute == true } }
+    var automations: [ScheduledRun] { runs.filter { $0.isSavedRoute != true } }
     private let notifier = UserNotificationRunNotifier()
     private var sink: SpoofSessionSink?
     private weak var session: SpoofSession?
@@ -66,6 +70,7 @@ final class ScheduledRunsController: ObservableObject {
             .flatMap { try? JSONDecoder().decode(DrivePreferences.self, from: $0) } ?? DrivePreferences()
         let store = ScheduledRunStore(directory: ScheduledRunStore.defaultDirectory())
         let routes = CachingRouteProvider(base: MapKitRouteProvider(), cache: RouteCache(fileURL: store.routeCacheURL))
+        routeProvider = routes
         coordinator = RunCoordinator(store: store, routeProvider: routes, clock: SystemRunClock(), sink: nil, notifier: notifier)
         coordinator.onChange = { [weak self] in self?.publish() }
         coordinator.logObserver = { entry in
@@ -81,18 +86,23 @@ final class ScheduledRunsController: ObservableObject {
         let sink = SpoofSessionSink(session: session, pairing: pairing)
         self.sink = sink
         coordinator.sink = sink
+        sink.onReady = { [weak self] in Task { await self?.tickNow() } }
+        coordinator.manualActivity = { [weak session] in session?.manualActivity }
+        session.runOwnsLocation = { [weak self] in self?.isBusy == true }
+        session.canTakeManualControl = { [weak self] in self?.startingRunID == nil }
         coordinator.currentLocation = { [weak session] in
             guard let session, session.isSpoofing, let sim = session.simulated else { return nil }
             return GeoPoint(sim)
         }
         session.onManualControl = { [weak self] what in
+            self?.sink?.invalidateCompletion()
             self?.coordinator.manualOverride(what)
         }
         // When the spoof session reconnects, resend the run's position.
         sessionStatusCancellable = session.$status
             .removeDuplicates()
             .sink { [weak self] status in
-                if case .active = status { self?.coordinator.spoofingReconnected() }
+                if status.isDropped { self?.coordinator.invalidateConfirmedOutput() }
             }
         coordinator.load()
         observe()
@@ -247,22 +257,41 @@ final class ScheduledRunsController: ObservableObject {
         }
     }
 
-    /// A one-off drive from the map, built from `drivePrefs`. Starts from the
-    /// simulated location when spoofing, otherwise from `origin` (real GPS).
-    func makeDrive(to place: PlaceRef, origin: PlaceRef?) -> ScheduledRun {
-        var actions: [RunAction] = []
-        if let origin { actions.append(RunAction(.setLocation(origin))) }
-        actions.append(RunAction(.driveTo(place, speed: nil)))
-        var run = ScheduledRun(name: "Drive to \(place.name)", actions: actions, schedule: .manual, tint: 1)
-        apply(drivePrefs, to: &run)
-        return run
+    func routeOptions(from: GeoPoint, to: GeoPoint) async throws -> [RouteResult] {
+        do {
+            let options = try await RouteBuilder.routes(from: from, to: to, alternatives: true)
+            if let first = options.first { routeProvider.cache.store(first, from: from, to: to) }
+            return options
+        } catch {
+            try Task.checkCancellation()
+            if var cached = routeProvider.cache.lookup(from: from, to: to) {
+                cached.fromCache = true
+                return [cached]
+            }
+            throw error
+        }
     }
 
-    /// Re-applies speed/traffic settings, keeping step identities (and so the
-    /// same red lights) stable.
-    func apply(_ prefs: DrivePreferences, to run: inout ScheduledRun) {
-        run.defaultSpeed = prefs.speed
-        run.motion.realism = prefs.realism
+    var isBusy: Bool { coordinator.isBusy }
+    var canReplayDrive: Bool { lastDrive?.id == lastFinished?.runID && lastDrive != nil }
+
+    func startDrive(_ route: ScheduledRun) {
+        var run = route
+        run.id = UUID()
+        lastDrive = run
+        startOneOff(run)
+    }
+
+    func replayDrive() {
+        if let lastDrive { startDrive(lastDrive) }
+    }
+
+    func restartDrive() {
+        guard isOneOffActive, let lastDrive, lastDrive.id == activeRunID else { return }
+        guard session?.isBusy == false else { return }
+        coordinator.cancel(stopSpoofing: false)
+        sink?.invalidateCompletion()
+        startDrive(lastDrive)
     }
 
     func startOneOff(_ run: ScheduledRun) {
@@ -278,11 +307,12 @@ final class ScheduledRunsController: ObservableObject {
 
     /// Ends any run and returns the iPhone to its real location.
     func turnOffLocus(session: SpoofSession, pairing: PairingStore) {
-        if isActive { coordinator.cancel(stopSpoofing: true) }
-        if session.isSpoofing || session.simulated != nil || session.status.isDropped {
-            session.stop(pairing: pairing)
+        if isActive {
+            coordinator.cancel(stopSpoofing: true)
+            scheduleTimer()
+        } else if startingRunID == nil, session.needsClear || session.isSpoofing {
+            Task { await session.stop(pairing: pairing) }
         }
-        scheduleTimer()
     }
 
     func pause() { coordinator.pause(); scheduleTimer() }
@@ -315,5 +345,12 @@ final class ScheduledRunsController: ObservableObject {
 /// Remembered choices for map drives.
 struct DrivePreferences: Codable, Equatable {
     var speed: SpeedPolicy = .followLimit
-    var realism: DriveRealism = .natural
+    var realism: DriveRealism = .off
+    var settings: MotionSettings? = nil
+
+    var motion: MotionSettings {
+        var motion = settings ?? .standard
+        motion.realism = realism
+        return motion
+    }
 }

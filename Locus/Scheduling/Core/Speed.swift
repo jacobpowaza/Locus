@@ -30,6 +30,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     /// Match the road's reference speed (posted limit when known, otherwise the
     /// labelled fallback — see `SpeedReferenceSource`).
     case followLimit
+    /// Reference speed with seeded variation along the route.
+    case variable
     /// Fixed speed, metres per second.
     case constant(Double)
     /// Reference speed plus an offset, metres per second.
@@ -44,7 +46,7 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     func target(reference: Double) -> Double {
         let raw: Double
         switch self {
-        case .followLimit: raw = reference
+        case .followLimit, .variable: raw = reference
         case .constant(let v): raw = v
         case .aboveLimit(let o): raw = reference + o
         case .belowLimit(let o): raw = reference - o
@@ -63,7 +65,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
             "\(Int(unit.fromMetersPerSecond(mps).rounded())) \(unit.label)"
         }
         switch self {
-        case .followLimit: return "At the speed limit"
+        case .followLimit: return "Follow Speed Limit"
+        case .variable: return "Variable Speed"
         case .constant(let v): return "Steady \(fmt(v))"
         case .aboveLimit(let o): return "\(fmt(o)) over the limit"
         case .belowLimit(let o): return "\(fmt(o)) under the limit"
@@ -73,7 +76,7 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     /// Returns a human-readable problem, or nil when valid.
     var validationProblem: String? {
         switch self {
-        case .followLimit: return nil
+        case .followLimit, .variable: return nil
         case .constant(let v):
             if !v.isFinite || v < Self.minimumSpeed { return "Speed must be greater than zero." }
             if v > Self.maximumSpeed { return "Speed is unrealistically high." }
