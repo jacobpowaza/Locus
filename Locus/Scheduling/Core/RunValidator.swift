@@ -80,7 +80,7 @@ enum RunValidator {
                 case .none:
                     issues.append(.error("Locus was turned off by an earlier step, so there's nowhere to drive from. Add a Teleport step before this drive.", id))
                 case .runtime where !warnedRuntimeStart:
-                    issues.append(.warning("Starts from wherever you are when the run begins. Add a Teleport step first to always start from the same place.", id))
+                    issues.append(.warning("Starts from your current location unless an earlier step sets one.", id))
                     warnedRuntimeStart = true
                 default:
                     break

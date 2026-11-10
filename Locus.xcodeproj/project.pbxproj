@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		39FCECC8356949E18422D6B1 /* SpeedZonesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E551B0BB506F464286BAED6D /* SpeedZonesSection.swift */; };
 		12D34C4D15C43A7436C738FE /* DriveOptionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */; };
 		5D22F1A0AB9C98EB3B790C95 /* HomePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92D14F5297882F543A7D4A44 /* HomePanel.swift */; };
 		F2F38D17D41614B7AEFBB948 /* PlaceSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C56ABB26151A24AE119F04B /* PlaceSearch.swift */; };
@@ -45,6 +46,7 @@
 		320C1EFF784D0F0FB2400A31 /* RunScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */; };
 		73EEAB2AAA0E28D425385474 /* RunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */; };
 		24757E8B5D09F80B1C7D200A /* RunValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */; };
+		03B044FF156A4B53915A6840 /* PostedRoadLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F288A6216A4B9E8931B572 /* PostedRoadLimits.swift */; };
 		D331DD17C93393AC110EF4A5 /* Speed.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF6CC5DC0991265CC33894D /* Speed.swift */; };
 		C591B4552483C3A2149BFC0A /* ScheduledRunsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58DFF0CF151FABEBF23B5E7C /* ScheduledRunsBridge.swift */; };
 		F6D69E8D68265E340662946C /* ScheduledRunsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FF109A316DDA20958A1D39C /* ScheduledRunsController.swift */; };
@@ -60,6 +62,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E551B0BB506F464286BAED6D /* SpeedZonesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedZonesSection.swift; sourceTree = "<group>"; };
 		39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveOptionsSheet.swift; sourceTree = "<group>"; };
 		92D14F5297882F543A7D4A44 /* HomePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomePanel.swift; sourceTree = "<group>"; };
 		7C56ABB26151A24AE119F04B /* PlaceSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSearch.swift; sourceTree = "<group>"; };
@@ -102,6 +105,7 @@
 		B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunScheduler.swift; sourceTree = "<group>"; };
 		5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStore.swift; sourceTree = "<group>"; };
 		BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunValidator.swift; sourceTree = "<group>"; };
+		52F288A6216A4B9E8931B572 /* PostedRoadLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostedRoadLimits.swift; sourceTree = "<group>"; };
 		CFF6CC5DC0991265CC33894D /* Speed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Speed.swift; sourceTree = "<group>"; };
 		58DFF0CF151FABEBF23B5E7C /* ScheduledRunsBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunsBridge.swift; sourceTree = "<group>"; };
 		5FF109A316DDA20958A1D39C /* ScheduledRunsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunsController.swift; sourceTree = "<group>"; };
@@ -157,6 +161,7 @@
 			children = (
 				797AA07D5CE5A7FD9D385F5F /* MapDropPin.swift */,
 				F714A23C4C718E67E978565F /* MapHomeView.swift */,
+				E551B0BB506F464286BAED6D /* SpeedZonesSection.swift */,
 				39DABA8195FA4647BA80D212 /* DriveOptionsSheet.swift */,
 				92D14F5297882F543A7D4A44 /* HomePanel.swift */,
 				7C56ABB26151A24AE119F04B /* PlaceSearch.swift */,
@@ -274,6 +279,7 @@
 				B6BD2609A230ECFC3B47B109 /* RunScheduler.swift */,
 				5CC1563AC54B9DA5CC3FDDC6 /* RunStore.swift */,
 				BB5AB61CC352C5CC3DDDD740 /* RunValidator.swift */,
+				52F288A6216A4B9E8931B572 /* PostedRoadLimits.swift */,
 				CFF6CC5DC0991265CC33894D /* Speed.swift */,
 			);
 			path = Core;
@@ -388,6 +394,7 @@
 				320C1EFF784D0F0FB2400A31 /* RunScheduler.swift in Sources */,
 				73EEAB2AAA0E28D425385474 /* RunStore.swift in Sources */,
 				24757E8B5D09F80B1C7D200A /* RunValidator.swift in Sources */,
+				03B044FF156A4B53915A6840 /* PostedRoadLimits.swift in Sources */,
 				D331DD17C93393AC110EF4A5 /* Speed.swift in Sources */,
 				C591B4552483C3A2149BFC0A /* ScheduledRunsBridge.swift in Sources */,
 				F6D69E8D68265E340662946C /* ScheduledRunsController.swift in Sources */,
@@ -409,6 +416,7 @@
 				1A9609434342E76342B42B54 /* LocusEasterEggView.swift in Sources */,
 				C8CC0EF3E134ADF2BE9F995F /* MapDropPin.swift in Sources */,
 				D5613248D3DDD96C0D62BF7F /* MapHomeView.swift in Sources */,
+				39FCECC8356949E18422D6B1 /* SpeedZonesSection.swift in Sources */,
 				12D34C4D15C43A7436C738FE /* DriveOptionsSheet.swift in Sources */,
 				5D22F1A0AB9C98EB3B790C95 /* HomePanel.swift in Sources */,
 				F2F38D17D41614B7AEFBB948 /* PlaceSearch.swift in Sources */,

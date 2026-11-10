@@ -99,6 +99,7 @@ struct ExecutionSnapshot: Equatable {
 /// - After a restart, progress is caught up from the last checkpoint's wall
 ///   time, then the run is paused so the user decides to continue.
 final class RunExecutor {
+    private static let driveCadence = 1.0
     private(set) var state: ExecutionState
     weak var sink: LocationSink?
 
@@ -109,6 +110,7 @@ final class RunExecutor {
     private var pendingSince: Date?
     private var awaitingDelivery = false
     private var pendingDriveAdvance: Double?
+    private var pendingDriveSubmission: Double?
     private var queuedSpeed: SpeedPolicy?
     private(set) var stopRequested = false
     private var skipRequested = false
@@ -178,7 +180,22 @@ final class RunExecutor {
         if dt > suspensionThreshold {
             log(.warning, "Locus was suspended. Playback continues from the last confirmed position.", wallNow)
         }
-        step(dt: dt > suspensionThreshold || sinkFailingSince != nil ? 0 : dt, wallNow: wallNow)
+        let interrupted = dt > suspensionThreshold || sinkFailingSince != nil
+        if interrupted { pendingDriveSubmission = nil }
+        let index = state.index
+        let hadPendingDrive = pendingDriveAdvance != nil
+        step(dt: interrupted ? 0 : dt, wallNow: wallNow)
+        if awaitingDelivery, pendingDriveAdvance != nil {
+            if !hadPendingDrive { pendingDriveSubmission = monotonic }
+        } else {
+            // A prompt acknowledgment should not add a second wait to every
+            // moving fix. Use the send time as the origin for the next frame.
+            if let submission = pendingDriveSubmission, state.index == index,
+               pendingDriveAdvance == nil, monotonic - submission < Self.driveCadence {
+                lastMonotonic = submission
+            }
+            pendingDriveSubmission = nil
+        }
         if let policy = queuedSpeed, pendingDriveAdvance == nil {
             queuedSpeed = nil
             changeSpeed(to: policy, wallNow: wallNow)
@@ -259,7 +276,8 @@ final class RunExecutor {
                 let left = max(0, leg.profile.duration - state.elapsedInSegment)
                 let increment = pendingDriveAdvance ?? min(remaining, left)
                 let next = leg.profile.state(at: state.elapsedInSegment + increment)
-                guard send(.at(next.position), speed: next.speed, heading: next.heading, wallNow: wallNow) else {
+                let point = increment >= left ? leg.destination.point : next.position
+                guard send(.at(point), speed: next.speed, heading: next.heading, wallNow: wallNow) else {
                     pendingDriveAdvance = increment
                     return
                 }
@@ -383,6 +401,7 @@ final class RunExecutor {
         state.status = .paused
         state.pauseReason = reason
         state.lastWall = wallNow
+        pendingDriveSubmission = nil
         log(reason == nil ? .info : .warning, reason.map { "Paused: \($0)" } ?? "Paused.", wallNow)
 
     }
@@ -422,11 +441,12 @@ final class RunExecutor {
         let seg = state.plan.segments[state.index]
         skipRequested = true
         if case .drive(let leg) = seg.kind {
-            guard send(.at(leg.profile.polyline.end), speed: 0, wallNow: wallNow) else { return }
+            guard send(.at(leg.destination.point), speed: 0, wallNow: wallNow) else { return }
             state.distanceBanked += leg.profile.distance
         }
         skipRequested = false
         pendingDriveAdvance = nil
+        pendingDriveSubmission = nil
         log(.info, "Skipped: \(seg.summary).", wallNow)
         enterNext(completed: false)
         lastMonotonic = monotonic
@@ -491,12 +511,14 @@ final class RunExecutor {
     // MARK: - Reading
 
     /// Seconds until the executor next needs a tick.
-    func nextWakeDelay(wallNow: Date) -> Double {
+    func nextWakeDelay(wallNow: Date, monotonic: Double) -> Double {
         if awaitingDelivery { return 0.25 }
         if stopRequested || skipRequested || (state.status == .running && sinkFailingSince != nil) { return 2 }
         guard state.status == .running, state.index < state.plan.segments.count else { return 30 }
         switch state.plan.segments[state.index].kind {
-        case .drive: return 1
+        case .drive:
+            let elapsed = max(0, monotonic - (lastMonotonic ?? monotonic))
+            return max(0.25, Self.driveCadence - elapsed)
         case .hold(let s): return min(15, max(0.25, s - state.elapsedInSegment))
         case .waitUntil(let t): return min(15, max(0.25, t.timeIntervalSince(wallNow)))
         default: return 0.25

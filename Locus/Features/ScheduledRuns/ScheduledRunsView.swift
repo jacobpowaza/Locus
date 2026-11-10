@@ -233,9 +233,8 @@ struct ScheduledRunsView: View {
     }
 
     private func blankRun() -> ScheduledRun {
-        var r = ScheduledRun(name: "", tint: runs.automations.count % RunsStyle.tints.count)
-        r.motion.realism = runs.drivePrefs.realism
-        return r
+        ScheduledRun(name: "", defaultSpeed: runs.drivePrefs.speed, motion: runs.drivePrefs.motion,
+                     tint: runs.automations.count % RunsStyle.tints.count)
     }
 
     private func commuteExample() -> ScheduledRun {
@@ -264,49 +263,54 @@ struct RunTile: View {
 
     var body: some View {
         let tint = RunsStyle.tint(run.tint)
-        Button(action: onEdit) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    Image(systemName: run.schedule.isAutomatic ? "calendar.badge.clock" : "point.topleft.down.to.point.bottomright.curvepath")
+        ZStack(alignment: .topTrailing) {
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: run.schedule.isAutomatic ? "clock.fill" : "square.on.square.fill")
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Button(action: onRun) {
-                        Group {
-                            if isStarting {
-                                ProgressView().tint(.white)
-                            } else {
-                                Image(systemName: isRunning ? "waveform" : "play.fill")
-                                    .symbolEffect(.variableColor.iterative, isActive: isRunning)
-                            }
-                        }
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(tint)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(.white))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isRunning || isStarting)
-                    .accessibilityLabel(isRunning ? "Running" : "Run \(run.name) now")
+                        .frame(height: 44)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                    Text(run.name).font(.headline).lineLimit(2)
+                    Text(subtitle).font(.caption.weight(.medium)).lineLimit(2)
+                        .foregroundStyle(.white.opacity(0.9))
                 }
-                Spacer(minLength: 4)
-                Text(run.name)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Text(subtitle)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                .multilineTextAlignment(.leading)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+                .padding(14)
+                .background {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(tint.gradient)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(.black.opacity(isOff ? 0.56 : 0.44))
+                        }
+                }
+                .contentShape(.rect(cornerRadius: 22))
             }
-            .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
-            .padding(14)
-            .locusGlass(.interactive, tint: tint.opacity(isOff ? 0.35 : 0.85),
-                        in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .buttonStyle(PanelRowButtonStyle())
+            .accessibilityHint("Opens the run editor")
+
+            Button(action: onRun) {
+                Group {
+                    if isStarting {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: isRunning ? "waveform" : "play.fill")
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.16), in: Circle())
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isRunning || isStarting)
+            .accessibilityLabel(isRunning ? "Running" : "Run \(run.name) now")
+            .padding(10)
         }
-        .buttonStyle(.plain)
     }
 
     private var isOff: Bool { run.schedule.isAutomatic && !run.isEnabled }

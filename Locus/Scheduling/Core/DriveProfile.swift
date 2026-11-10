@@ -48,6 +48,7 @@ struct DriveProfile: Codable, Equatable {
     var duration: Double { nodeTimes.last ?? 0 }
     var distance: Double { polyline.length }
     var referenceSource: SpeedReferenceSource { reference.overallSource(routeLength: distance) }
+    var hasPostedLimits: Bool { !reference.spans.isEmpty }
     var maxSpeed: Double { nodeSpeeds.max() ?? 0 }
     var averageSpeed: Double { duration > 0 ? distance / duration : 0 }
 
@@ -68,12 +69,34 @@ struct DriveProfile: Codable, Equatable {
         // happen at the boundary (brake before a slower zone, speed up only
         // after entering a faster one).
         let variesSpeed = policy == .variable || (policy.usesReference && motion.realism?.varySpeed == true)
+        let zones = (motion.speedZones ?? []).filter(\.isValid).sorted { $0.speed < $1.speed }
+        let timeWindow = min(120, max(12, line.length / reference.fallback))
+        var cruisingTime = 0.0
         var segTarget = [Double](repeating: 0, count: max(0, n - 1))
         for k in 0..<(n - 1) {
             let mid = (line.cumulative[k] + line.cumulative[k + 1]) / 2
-            let base = policy.target(reference: reference.speed(atDistance: mid).value)
-            let drift = variesSpeed ? DriveRealismPlanner.factor(speedKnots, atDistance: mid) : 1
-            segTarget[k] = min(SpeedPolicy.maximumSpeed, max(SpeedPolicy.minimumSpeed, base * drift))
+            let point = Geo.interpolate(line.points[k], line.points[k + 1], 0.5)
+            if let zone = zones.first(where: { $0.contains(point) }) {
+                segTarget[k] = zone.speed
+                continue
+            }
+            let limit = reference.speed(atDistance: mid)
+            if case .aboveLimitForTime(let offset, let percent) = policy, !limit.source.isFallback {
+                let length = line.cumulative[k + 1] - line.cumulative[k]
+                let phase = (cruisingTime + length / (2 * limit.value)).truncatingRemainder(dividingBy: timeWindow)
+                // Put the faster stretch in the middle of each cruising window.
+                let isAbove = percent >= 100 || abs(phase / timeWindow - 0.5) < percent / 200
+                let target = isAbove ? SpeedPolicy.aboveLimit(offset).target(reference: limit.value) : limit.value
+                segTarget[k] = target
+                cruisingTime += length / target
+                continue
+            }
+            let base = limit.source.isFallback && policy.usesReference
+                ? limit.value : policy.target(reference: limit.value)
+            let drift = variesSpeed && (!limit.source.isFallback || policy == .variable)
+                ? DriveRealismPlanner.factor(speedKnots, atDistance: mid) : 1
+            let adjusted = policy == .followLimit ? base * min(1, drift) : base * drift
+            segTarget[k] = min(SpeedPolicy.maximumSpeed, max(SpeedPolicy.minimumSpeed, adjusted))
         }
         var v = [Double](repeating: 0, count: n)
         for i in 0..<n {

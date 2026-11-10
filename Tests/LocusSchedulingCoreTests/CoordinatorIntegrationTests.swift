@@ -106,6 +106,34 @@ final class CoordinatorIntegrationTests: XCTestCase {
         XCTAssertEqual(c.history.first?.runName, "Drive to Work")
     }
 
+    func testEndingDriveReplacesPlaybackOnlyAfterTheNewPlanCompiles() async throws {
+        let c = makeCoordinator()
+        let drive = ScheduledRun(name: "Drive to Work", actions: [
+            RunAction(.setLocation(home)),
+            RunAction(.driveTo(work, speed: nil)),
+        ])
+        let startError = await c.startOneOff(drive)
+        XCTAssertNil(startError)
+        await run(c, for: 20)
+        c.pause()
+        let confirmed = sink.calls.last
+
+        let invalid = ScheduledRun(name: "Invalid replacement", actions: [])
+        let routeError = await c.replaceDrive(invalid, replacing: drive.id)
+        XCTAssertNotNil(routeError)
+        XCTAssertEqual(c.executor?.state.runID, drive.id)
+        XCTAssertEqual(c.snapshot()?.status, .paused)
+        XCTAssertEqual(sink.calls.last, confirmed)
+
+        let arrival = ScheduledRun(name: "Arrive at Work", actions: [RunAction(.setLocation(work))])
+        let endError = await c.replaceDrive(arrival, replacing: drive.id)
+        XCTAssertNil(endError)
+        XCTAssertNil(c.executor)
+        XCTAssertEqual(sink.calls.last, .set(work.point))
+        XCTAssertEqual(c.history.first { $0.runID == drive.id }?.outcome, .cancelled)
+        XCTAssertEqual(c.history.first { $0.runID == arrival.id }?.outcome, .completed)
+    }
+
     func testScheduledRunFullLifecycle() async throws {
         let c = makeCoordinator()
         let r = commute()

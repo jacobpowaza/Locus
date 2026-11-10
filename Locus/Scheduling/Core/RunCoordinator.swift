@@ -60,6 +60,7 @@ final class RunCoordinator {
     var logObserver: ((ExecutionLogEntry) -> Void)?
     /// What Locus is spoofing right now (for runs that don't begin with Set Location).
     var currentLocation: @MainActor () -> GeoPoint? = { nil }
+    var defaultDriveOrigin: @MainActor () -> GeoPoint? = { nil }
 
     let store: ScheduledRunStore
     let routeProvider: RouteProvider
@@ -216,7 +217,8 @@ final class RunCoordinator {
         }
         let compiler = RunCompiler(routeProvider: routeProvider)
         do {
-            let result = try await compiler.compile(run, anchorDate: start, startDate: start, currentLocation: currentLocation())
+            let result = try await compiler.compile(run, anchorDate: start, startDate: start, currentLocation: currentLocation(),
+                                                    defaultDriveOrigin: defaultDriveOrigin())
             // Overlaps need this run's real duration, so check after compiling.
             var timed = run
             timed.estimatedDuration = result.estimatedDuration
@@ -285,7 +287,17 @@ final class RunCoordinator {
         return await begin(run, trigger: .manual, occurrence: nil)
     }
 
-    private func begin(_ run: ScheduledRun, trigger: RunTrigger, occurrence: Date?) async -> String? {
+    /// Keep the paused trip available until the replacement route is ready.
+    func replaceDrive(_ run: ScheduledRun, replacing id: UUID) async -> String? {
+        guard startingRunID == nil, let active = executor,
+              active.state.runID == id, active.state.status == .paused, !active.stopRequested else {
+            return "This drive has already changed."
+        }
+        return await begin(run, trigger: .manual, occurrence: nil, replacing: active)
+    }
+
+    private func begin(_ run: ScheduledRun, trigger: RunTrigger, occurrence: Date?,
+                       replacing previous: RunExecutor? = nil) async -> String? {
         if let manual = manualActivity?() { return "Finish \(manual.lowercased()) before starting a run." }
         startingRunID = run.id
         changed()
@@ -297,7 +309,15 @@ final class RunCoordinator {
         let anchor = occurrence ?? now
         let compiler = RunCompiler(routeProvider: routeProvider)
         do {
-            let result = try await compiler.compile(run, anchorDate: anchor, startDate: clock.now, currentLocation: currentLocation())
+            let result = try await compiler.compile(run, anchorDate: anchor, startDate: clock.now, currentLocation: currentLocation(),
+                                                    defaultDriveOrigin: defaultDriveOrigin())
+            if let previous {
+                guard executor === previous, previous.state.status == .paused, !previous.stopRequested else {
+                    return "This drive has already changed."
+                }
+                previous.cancel(stopSpoofing: false, wallNow: clock.now)
+                finish(previous)
+            }
             let ex = RunExecutor.start(
                 plan: result.plan,
                 run: run,
@@ -493,7 +513,7 @@ final class RunCoordinator {
     /// Seconds until `tick()` is next needed.
     func nextWakeDelay() -> Double {
         let now = clock.now
-        var delay = executor?.nextWakeDelay(wallNow: now) ?? 60
+        var delay = executor?.nextWakeDelay(wallNow: now, monotonic: clock.monotonic) ?? 60
         if let next = RunScheduler.nextWake(runs: runs, now: now) {
             delay = min(delay, max(0.25, next.date.timeIntervalSince(now)))
         }

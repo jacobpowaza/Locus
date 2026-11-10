@@ -39,7 +39,7 @@ enum RouteBuilder {
                   Geo.distance(start, road.start) <= RunCompiler.maxSnapDistance,
                   Geo.distance(end, road.end) <= RunCompiler.maxSnapDistance else { return nil }
             return RouteResult(points: road.points, expectedTravelTime: route.expectedTravelTime,
-                               speedLimits: nil, providerName: "Apple Maps")
+                               speedLimits: nil, providerName: "Apple Maps", name: route.name.isEmpty ? nil : route.name)
         }
         guard !routes.isEmpty else { throw RouteProviderError.noRoute }
         return routes

@@ -86,6 +86,29 @@ final class SpeedTests: XCTestCase {
         XCTAssertFalse(SpeedReferenceSource.postedLimits.label.contains("Estimated"))
         XCTAssertTrue(SpeedReferenceSource.routeAverage.label.contains("Estimated"))
         XCTAssertTrue(SpeedReferenceSource.travelModeDefault.label.contains("Estimated"))
-        XCTAssertTrue(SpeedReferenceSource.routeAverage.explanation.contains("not the signed limit"))
+        XCTAssertTrue(SpeedReferenceSource.routeAverage.explanation.contains("without a speed offset"))
+    }
+
+    func testMapMatchedLimitsKeepUnknownAndUnlimitedRoadsUnmapped() throws {
+        let data = Data("""
+        {
+          "edges": [{"speed_limit":40}, {"speed_limit":80}, {"speed_limit":"unlimited"}, {}],
+          "matched_points": [
+            {"edge_index":0,"distance_from_trace_point":1},
+            {"edge_index":0,"distance_from_trace_point":2},
+            {"edge_index":1,"distance_from_trace_point":1},
+            {"edge_index":1,"distance_from_trace_point":2},
+            {"edge_index":2,"distance_from_trace_point":2},
+            {"edge_index":3,"distance_from_trace_point":2},
+            {"edge_index":1,"distance_from_trace_point":2},
+            {"edge_index":1,"distance_from_trace_point":40}
+          ]
+        }
+        """.utf8)
+        let spans = try PostedRoadLimits.spans(from: data, distances: [0, 20, 40, 60, 80, 100, 120, 140])
+        XCTAssertEqual(spans, [
+            SpeedLimitSpan(fromDistance: 0, toDistance: 30, limit: SpeedUnit.kmh.toMetersPerSecond(40)),
+            SpeedLimitSpan(fromDistance: 30, toDistance: 60, limit: SpeedUnit.kmh.toMetersPerSecond(80)),
+        ])
     }
 }

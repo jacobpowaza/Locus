@@ -57,9 +57,11 @@ struct RunEditorView: View {
         NavigationStack {
             List {
                 headerSection
-                stepsSection
                 scheduleSection
-                drivingSection
+                stepsSection
+                if draft.actions.contains(where: { $0.kind.category == .driveTo }) {
+                    drivingSection
+                }
                 previewSection
             }
             .environment(\.editMode, $editMode)
@@ -94,9 +96,16 @@ struct RunEditorView: View {
             } message: { Text(runs.errorMessage ?? "Check available storage and try again.") }
             .sheet(isPresented: $showAddAction) {
                 AddActionSheet { kind in
-                    let action = RunAction(kind)
-                    withAnimation(.snappy) { draft.insertAction(action) }
-                    if needsImmediateEditing(kind) { editingAction = action }
+                    withAnimation(.snappy) {
+                        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            switch kind {
+                            case .driveTo(let place, _): draft.name = "Drive to \(place.name)"
+                            case .setLocation(let place): draft.name = "Teleport to \(place.name)"
+                            default: break
+                            }
+                        }
+                        draft.insertAction(RunAction(kind))
+                    }
                 }
                 .presentationDetents([.medium, .large])
             }
@@ -164,7 +173,7 @@ struct RunEditorView: View {
     private var stepsSection: some View {
         Section {
             if draft.actions.isEmpty {
-                Text("Add steps like Teleport, Wait and Drive To. They play from top to bottom.")
+                Text("Choose what this run should do. Actions play from top to bottom.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -180,6 +189,8 @@ struct RunEditorView: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture { if editMode == .inactive { editingAction = action } }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { if editMode == .inactive { editingAction = action } }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
                         withAnimation { draft.deleteAction(id: action.id) }
@@ -209,7 +220,8 @@ struct RunEditorView: View {
                     }
                 }
                 .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
             }
             .onMove { from, to in
                 withAnimation { draft.moveActions(fromOffsets: from, toOffset: to) }
@@ -221,14 +233,14 @@ struct RunEditorView: View {
             Button {
                 showAddAction = true
             } label: {
-                Label("Add Step", systemImage: "plus.circle.fill")
+                Label("Add Action", systemImage: "plus.circle.fill")
                     .font(.headline)
                     .foregroundStyle(LocusTheme.accent)
             }
             .listRowSeparator(.hidden)
         } header: {
             HStack {
-                Text("Steps")
+                Text("Do")
                 Spacer()
                 if draft.actions.count > 1 {
                     Button(editMode == .active ? "Done" : "Reorder") {
@@ -257,7 +269,7 @@ struct RunEditorView: View {
             Text("When")
         } footer: {
             if draft.schedule.isAutomatic {
-                Text("Keep Locus open for scheduled starts. With notifications allowed, reminders can bring you back to the run.")
+                Text("Locus starts scheduled runs while it’s running. Turn on notifications for start reminders.")
             }
         }
     }
@@ -274,23 +286,26 @@ struct RunEditorView: View {
             NavigationLink {
                 Form {
                     SpeedPolicyEditor(policy: $draft.defaultSpeed, unit: runs.unit, referenceSource: firstDriveReferenceSource)
+                    SpeedZonesSection(zones: $draft.motion.speedZones, plan: preview?.plan, unit: runs.unit)
+                    Section("Traffic") {
+                        Toggle("Simulate red lights", isOn: realism.redLights)
+                        if realism.wrappedValue.redLights {
+                            Picker("Longest wait", selection: realism.maxRedLightWait) {
+                                ForEach(DriveRealism.redLightChoices, id: \.self) { Text(RunFormat.duration($0)).tag($0) }
+                            }
+                        }
+                        Toggle("Simulate stop signs", isOn: realism.stopSigns)
+                        Toggle("Vary speed naturally", isOn: realism.varySpeed)
+                    }
                 }
-                .navigationTitle("Speed")
+                .navigationTitle("Driving Options")
             } label: {
                 LabeledContent("Speed", value: draft.defaultSpeed.summary(unit: runs.unit))
             }
-            Toggle("Stop at red lights", isOn: realism.redLights)
-            if realism.wrappedValue.redLights {
-                Picker("Longest wait", selection: realism.maxRedLightWait) {
-                    ForEach(DriveRealism.redLightChoices, id: \.self) { Text(RunFormat.duration($0)).tag($0) }
-                }
-            }
-            Toggle("Stop at stop signs", isOn: realism.stopSigns)
-            Toggle("Vary speed naturally", isOn: realism.varySpeed)
         } header: {
             Text("Driving")
         } footer: {
-            Text("Used by every Drive To step. Lights and signs are added at turns and intersections along the route.")
+            Text("Applies to each Drive To action unless it has a custom speed.")
         }
     }
 
@@ -359,13 +374,6 @@ struct RunEditorView: View {
             Text(label).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private func needsImmediateEditing(_ kind: RunActionKind) -> Bool {
-        switch kind {
-        case .stopSpoofing: return false
-        default: return true
-        }
     }
 
     private func save() -> Bool {

@@ -65,9 +65,11 @@ final class DriveProfileTests: XCTestCase {
         let slow = DriveProfile(route: line, reference: ref(13), policy: .constant(10))
         let fast = DriveProfile(route: line, reference: ref(13), policy: .constant(20))
         XCTAssertLessThan(fast.duration, slow.duration * 0.55)
-        let above = DriveProfile(route: line, reference: ref(13), policy: .aboveLimit(SpeedUnit.mph.toMetersPerSecond(5)))
-        let follow = DriveProfile(route: line, reference: ref(13), policy: .followLimit)
-        let below = DriveProfile(route: line, reference: ref(13), policy: .belowLimit(SpeedUnit.mph.toMetersPerSecond(5)))
+        var posted = ref(13)
+        posted.spans = [SpeedLimitSpan(fromDistance: 0, toDistance: line.length, limit: 13)]
+        let above = DriveProfile(route: line, reference: posted, policy: .aboveLimit(SpeedUnit.mph.toMetersPerSecond(5)))
+        let follow = DriveProfile(route: line, reference: posted, policy: .followLimit)
+        let below = DriveProfile(route: line, reference: posted, policy: .belowLimit(SpeedUnit.mph.toMetersPerSecond(5)))
         XCTAssertLessThan(above.duration, follow.duration)
         XCTAssertLessThan(follow.duration, below.duration)
     }
@@ -100,6 +102,53 @@ final class DriveProfileTests: XCTestCase {
         let below = DriveProfile(route: try straight(3000), reference: reference, policy: .belowLimit(five))
         XCTAssertNear(above.maxSpeed, 20 + five, 1e-6)
         XCTAssertNear(below.maxSpeed, 20 - five, 1e-6)
+    }
+
+    func testAboveLimitUsesPostedSpeedAndSkipsOffsetOnUnmappedRoad() throws {
+        let line = try straight(3000)
+        let mph = SpeedUnit.mph
+        var reference = ref(mph.toMetersPerSecond(35))
+        reference.spans = [SpeedLimitSpan(fromDistance: 0, toDistance: 1500, limit: mph.toMetersPerSecond(25))]
+        let profile = DriveProfile(route: line, reference: reference, policy: .aboveLimit(mph.toMetersPerSecond(15)))
+        let states = samples(profile)
+        let posted = try XCTUnwrap(states.first { $0.distanceTravelled > 700 })
+        let unmapped = try XCTUnwrap(states.first { $0.distanceTravelled > 2200 })
+        XCTAssertNear(mph.fromMetersPerSecond(posted.speed), 40, 0.01)
+        XCTAssertEqual(posted.referenceSource, .postedLimits)
+        XCTAssertNear(mph.fromMetersPerSecond(unmapped.speed), 35, 0.01)
+        XCTAssertEqual(unmapped.referenceSource, .routeAverage)
+    }
+
+    func testAboveLimitForTimeUsesTimedCruisingWindowsOnPostedRoads() throws {
+        let line = try straight(6000)
+        var reference = ref(15)
+        reference.spans = [SpeedLimitSpan(fromDistance: 0, toDistance: 4000, limit: 15)]
+        let policy = SpeedPolicy.aboveLimitForTime(offset: 3, percent: 30)
+        let profile = DriveProfile(route: line, reference: reference, policy: policy)
+        let states = samples(profile, dt: 0.1)
+        let posted = states.filter { !$0.referenceSource.isFallback }
+        let above = posted.filter { $0.speed > 15.01 }
+        XCTAssertNear(Double(above.count) / Double(posted.count), 0.30, 0.07)
+        XCTAssertNear(profile.maxSpeed, 18, 1e-6)
+        XCTAssertTrue(states.filter { $0.referenceSource.isFallback }.allSatisfy { $0.speed <= 15.01 })
+        XCTAssertEqual(try JSONDecoder().decode(SpeedPolicy.self, from: JSONEncoder().encode(policy)), policy)
+    }
+
+    func testSpeedZoneOverridesPolicyAndSurvivesReplanning() throws {
+        let line = try straight(2000)
+        let vertices = [offset(sf, east: 500, north: -60), offset(sf, east: 1500, north: -60),
+                        offset(sf, east: 1500, north: 60), offset(sf, east: 500, north: 60)]
+        var motion = MotionSettings.standard
+        motion.speedZones = [SpeedZone(vertices: vertices, speed: 8), SpeedZone(vertices: vertices, speed: 12)]
+        let profile = DriveProfile(route: line, reference: ref(13), policy: .constant(20), motion: motion)
+        let states = samples(profile)
+        let inside = try XCTUnwrap(states.first { $0.distanceTravelled > 700 })
+        let outside = try XCTUnwrap(states.first { $0.distanceTravelled > 1750 })
+        XCTAssertNear(inside.speed, 8, 0.01)
+        XCTAssertNear(outside.speed, 20, 0.01)
+        let rest = try XCTUnwrap(profile.remainder(from: profile.duration / 2, policy: .constant(25)))
+        XCTAssertEqual(rest.motion.speedZones, motion.speedZones)
+        XCTAssertNear(rest.state(at: 8).speed, 8, 0.01)
     }
 
     func testSlowsForSharpTurn() throws {

@@ -62,7 +62,7 @@ final class ScheduledRunsController: ObservableObject {
         "If Locus is force-quit, crashes, or was ended by iOS, nothing can start or continue a run. With notifications enabled, a reminder can open Locus. The run starts late if it is still within the late-start window, or appears as missed.",
         "If Locus restarts during a run, it restores the last confirmed checkpoint and waits for you to resume.",
         "iOS only receives coordinates from Locus. Apps compute speed and heading themselves from successive positions, so the speed shown here is Locus's simulated speed, not a value iOS reports.",
-        "Apple Maps doesn't provide posted speed limits. \"Follow speed limit\" uses Apple's estimated route-average speed and is labelled \"Estimated\".",
+        "Drives use OpenStreetMap limits where the road matches. Speed offsets apply only to those limits.",
     ]
 
     init() {
@@ -97,6 +97,9 @@ final class ScheduledRunsController: ObservableObject {
         coordinator.currentLocation = { [weak session] in
             guard let session, session.isSpoofing, let sim = session.simulated else { return nil }
             return GeoPoint(sim)
+        }
+        coordinator.defaultDriveOrigin = { [weak session] in
+            session?.realCoordinate.map(GeoPoint.init)
         }
         session.onManualControl = { [weak self] what in
             self?.sink?.invalidateCompletion()
@@ -303,6 +306,58 @@ final class ScheduledRunsController: ObservableObject {
         startDrive(lastDrive)
     }
 
+    var driveEndDestination: PlaceRef? {
+        if isOneOffActive, let activePlan {
+            if let lastDrive, lastDrive.id == activeRunID,
+               case .driveTo(let destination, _)? = lastDrive.actions.last?.kind { return destination }
+            for segment in activePlan.segments.reversed() {
+                if case .drive(let leg) = segment.kind { return leg.destination }
+            }
+        }
+        if case .drive(let leg)? = snapshot?.segment?.kind { return leg.destination }
+        return nil
+    }
+
+    func endDrive(at destination: PlaceRef, driving: Bool, replacing id: UUID) async -> String? {
+        guard let active = liveSnapshot(), activeRunID == id, driveEndDestination != nil,
+              startingRunID == nil, !active.isClearingLocation else { return "This drive has already changed." }
+        coordinator.pause()
+        defer { scheduleTimer() }
+
+        if driving { await sink?.waitForDelivery() }
+        let origin = session?.simulated.map(GeoPoint.init)
+        let isReturnDrive = driving && origin.map { Geo.distance($0, destination.point) >= RunCompiler.arrivalTolerance } == true
+        var motion = drivePrefs.motion
+        var speed = active.speedPolicy
+        if case .drive(let leg)? = active.segment?.kind {
+            motion = leg.profile.motion
+            speed = leg.profile.policy
+        }
+        let run: ScheduledRun
+        if isReturnDrive, let origin {
+            run = ScheduledRun(name: "Drive to \(destination.name)",
+                               actions: [
+                                   RunAction(.setLocation(PlaceRef(name: "Return start", point: origin))),
+                                   RunAction(.driveTo(destination, speed: nil)),
+                               ],
+                               defaultSpeed: speed, motion: motion)
+        } else {
+            run = ScheduledRun(name: "Arrive at \(destination.name)", actions: [RunAction(.setLocation(destination))])
+        }
+        if driving && origin == nil {
+            if active.status == .running, activeRunID == id { coordinator.resume() }
+            return "Locus needs a confirmed simulated location to drive back."
+        }
+        if let message = await coordinator.replaceDrive(run, replacing: id) {
+            if active.status == .running, activeRunID == id, coordinator.executor?.stopRequested == false {
+                coordinator.resume()
+            }
+            return message
+        }
+        if isReturnDrive { lastDrive = run }
+        return nil
+    }
+
     func startOneOff(_ run: ScheduledRun) {
         Task {
             if let message = await coordinator.startOneOff(run) {
@@ -352,6 +407,7 @@ final class ScheduledRunsController: ObservableObject {
         notes.append("Low Power Mode: \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "on" : "off")")
         if let s = session {
             notes.append("Connection: \(s.status.label) · path: \(s.networkDescription)")
+            notes.append("Core Location fix: \(s.coreLocationFixSummary)")
             if let detail = s.connectionDetail { notes.append("Last failure: \(detail)") }
         }
         notes.append(TunnelConfig.embeddedProvider ? "Packet tunnel provider is bundled; inspect signature for entitlement." : "No embedded packet tunnel provider. Uses an external helper.")

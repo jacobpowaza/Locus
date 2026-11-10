@@ -27,8 +27,7 @@ enum SpeedUnit: String, Codable, CaseIterable, Identifiable {
 
 /// How fast a simulated drive moves, relative to the road.
 enum SpeedPolicy: Codable, Equatable, Hashable {
-    /// Match the road's reference speed (posted limit when known, otherwise the
-    /// labelled fallback — see `SpeedReferenceSource`).
+    /// Match the posted limit where known and use the labeled fallback elsewhere.
     case followLimit
     /// Reference speed with seeded variation along the route.
     case variable
@@ -38,6 +37,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     case aboveLimit(Double)
     /// Reference speed plus a percentage (10 means ten percent).
     case aboveLimitPercent(Double)
+    /// A fixed offset during a target percentage of cruising time.
+    case aboveLimitForTime(offset: Double, percent: Double)
     /// Reference speed minus an offset, metres per second.
     case belowLimit(Double)
 
@@ -48,7 +49,7 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
     func target(reference: Double) -> Double {
         let raw: Double
         switch self {
-        case .followLimit, .variable: raw = reference
+        case .followLimit, .variable, .aboveLimitForTime: raw = reference
         case .constant(let v): raw = v
         case .aboveLimit(let o): raw = reference + o
         case .aboveLimitPercent(let p): raw = reference * (1 + p / 100)
@@ -73,6 +74,8 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
         case .constant(let v): return "Steady \(fmt(v))"
         case .aboveLimit(let o): return "\(fmt(o)) over the limit"
         case .aboveLimitPercent(let p): return "\(p.formatted(.number.precision(.fractionLength(0))))% over the limit"
+        case .aboveLimitForTime(let offset, let percent):
+            return "\(fmt(offset)) over for \(percent.formatted(.number.precision(.fractionLength(0))))% of cruising"
         case .belowLimit(let o): return "\(fmt(o)) under the limit"
         }
     }
@@ -86,6 +89,9 @@ enum SpeedPolicy: Codable, Equatable, Hashable {
             if v > Self.maximumSpeed { return "Speed is unrealistically high." }
         case .aboveLimitPercent(let p):
             if !p.isFinite || !(0...100).contains(p) { return "Percentage offset must be from 0 to 100." }
+        case .aboveLimitForTime(let offset, let percent):
+            if !percent.isFinite || !(0...100).contains(percent) { return "Time percentage must be from 0 to 100." }
+            return SpeedPolicy.aboveLimit(offset).validationProblem
         case .aboveLimit(let o), .belowLimit(let o):
             if !o.isFinite || o < 0 { return "Offset can't be negative." }
             if o > 40 { return "Offset is unrealistically large." }
@@ -111,6 +117,8 @@ struct MotionSettings: Codable, Equatable, Hashable {
     /// Red lights, stop signs and speed drift. Optional so runs saved before
     /// this existed still decode (nil = off).
     var realism: DriveRealism? = nil
+    /// Map areas with their own speed target. Absent in trips saved before zones.
+    var speedZones: [SpeedZone]? = nil
 
     static let standard = MotionSettings()
 }
@@ -139,11 +147,11 @@ enum SpeedReferenceSource: String, Codable, Equatable {
     var explanation: String {
         switch self {
         case .postedLimits:
-            return "Speeds follow posted limits from the routing data."
+            return "Uses posted limits from OpenStreetMap where the roads match."
         case .routeAverage:
-            return "Apple Maps doesn't provide posted speed limits. \"Limit\" here means Apple's estimated average speed for this route — not the signed limit."
+            return "Where a posted limit is unavailable, playback uses the estimated route speed without a speed offset."
         case .travelModeDefault:
-            return "No speed-limit or travel-time data for this route. \"Limit\" here is a default driving speed, not the signed limit."
+            return "Where road speed data is unavailable, playback uses the default driving speed without a speed offset."
         }
     }
 }
@@ -154,6 +162,54 @@ struct SpeedLimitSpan: Codable, Equatable, Hashable {
     var toDistance: Double
     /// m/s
     var limit: Double
+}
+
+struct SpeedZone: Identifiable, Codable, Equatable, Hashable {
+    var id = UUID()
+    var vertices: [GeoPoint]
+    /// Target in metres per second.
+    var speed: Double
+
+    static let maximumVertices = 64
+
+    var isValid: Bool {
+        guard (3...Self.maximumVertices).contains(vertices.count),
+              vertices.allSatisfy(\.isValid),
+              SpeedPolicy.constant(speed).validationProblem == nil else { return false }
+        let origin = vertices[0]
+        var area = 0.0
+        for i in vertices.indices {
+            let a = vertices[i]
+            let b = vertices[(i + 1) % vertices.count]
+            area += Self.longitudeDelta(a.longitude, origin.longitude) * (b.latitude - origin.latitude)
+            area -= Self.longitudeDelta(b.longitude, origin.longitude) * (a.latitude - origin.latitude)
+        }
+        return abs(area) > 1e-12
+    }
+
+    func contains(_ point: GeoPoint) -> Bool {
+        guard let origin = vertices.first?.longitude else { return false }
+        let x = Self.longitudeDelta(point.longitude, origin)
+        let y = point.latitude
+        var inside = false
+        for i in vertices.indices {
+            let a = vertices[i]
+            let b = vertices[(i + 1) % vertices.count]
+            guard (a.latitude > y) != (b.latitude > y) else { continue }
+            let ax = Self.longitudeDelta(a.longitude, origin)
+            let bx = Self.longitudeDelta(b.longitude, origin)
+            let edgeX = ax + (bx - ax) * (y - a.latitude) / (b.latitude - a.latitude)
+            if x < edgeX { inside.toggle() }
+        }
+        return inside
+    }
+
+    private static func longitudeDelta(_ longitude: Double, _ origin: Double) -> Double {
+        let delta = longitude - origin
+        if delta > 180 { return delta - 360 }
+        if delta < -180 { return delta + 360 }
+        return delta
+    }
 }
 
 /// Reference speed along a route: posted limits where known, otherwise one
@@ -173,9 +229,14 @@ struct SpeedReference: Codable, Equatable {
     }
 
     func speed(atDistance d: Double) -> (value: Double, source: SpeedReferenceSource) {
-        // Spans are few; linear scan is fine and allocation-free.
-        for span in spans where d >= span.fromDistance && d < span.toDistance {
-            return (span.limit, .postedLimits)
+        var lo = 0
+        var hi = spans.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if spans[mid].fromDistance <= d { lo = mid + 1 } else { hi = mid }
+        }
+        if lo > 0, d < spans[lo - 1].toDistance {
+            return (spans[lo - 1].limit, .postedLimits)
         }
         return (fallback, fallbackSource)
     }

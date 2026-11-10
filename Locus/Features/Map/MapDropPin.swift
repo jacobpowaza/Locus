@@ -31,6 +31,7 @@ struct MapDropPin: View {
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(.white, LocusTheme.accentSecondary)
                 .font(.system(size: isDragging ? 44 : 36))
+                .frame(width: 44, height: 44, alignment: .bottom)
                 .shadow(color: .black.opacity(0.35), radius: isDragging ? 8 : 4, y: 2)
                 .scaleEffect(isDragging ? 1.12 : 1)
         }

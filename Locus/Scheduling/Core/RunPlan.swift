@@ -84,7 +84,7 @@ struct RunPlan: Codable, Equatable {
 
     var finalLocation: GeoPoint? {
         guard let last = segments.last else { return nil }
-        if case .drive(let leg) = last.kind { return leg.profile.polyline.end }
+        if case .drive(let leg) = last.kind { return leg.destination.point }
         if case .teleport(let p) = last.kind { return p.point }
         if case .stop = last.kind { return nil }
         return last.location

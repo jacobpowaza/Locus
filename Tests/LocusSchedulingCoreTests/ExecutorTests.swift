@@ -64,6 +64,44 @@ final class ExecutorTests: XCTestCase {
         XCTAssertEqual(sink.speeds.max() ?? 0, 20, accuracy: 0.01)
     }
 
+    func testDriveCadenceIncludesPromptDeliveryTime() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: .constant(20))])
+        let ex = start(run, plan)
+        let started = clock.monotonic
+
+        for frame in 1...12 {
+            sink.pending = true
+            clock.advance(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic))
+            ex.advance(wallNow: clock.now, monotonic: clock.monotonic)
+            XCTAssertNear(clock.monotonic - started, Double(frame), 0.001)
+            XCTAssertNear(ex.state.elapsedInSegment, Double(frame - 1), 0.001)
+
+            tick(ex, seconds: 0.25, step: 0.25)
+            sink.pending = false
+            tick(ex, seconds: 0.15, step: 0.15)
+            XCTAssertNear(ex.state.elapsedInSegment, Double(frame), 0.001)
+        }
+        let lastTwoFixes = Array(sink.positions.suffix(2))
+        XCTAssertEqual(lastTwoFixes.count, 2)
+        if let first = lastTwoFixes.first, let last = lastTwoFixes.last {
+            XCTAssertNear(Geo.distance(first, last), 20, 0.05)
+        }
+    }
+
+    func testStalledDriveDeliveryDoesNotCauseCatchUp() async throws {
+        let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: .constant(20))])
+        let ex = start(run, plan)
+        sink.pending = true
+        tick(ex, seconds: 5)
+        XCTAssertEqual(ex.state.elapsedInSegment, 0)
+        sink.pending = false
+        tick(ex, seconds: 1)
+        XCTAssertEqual(ex.state.elapsedInSegment, 1)
+        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 1)
+        tick(ex, seconds: 1)
+        XCTAssertEqual(ex.state.elapsedInSegment, 2)
+    }
+
     func testPauseFreezesAndResumeRestartsFromStandstill() async throws {
         let (run, plan) = try await compile([.setLocation(home), .driveTo(work, speed: .constant(20))])
         let ex = start(run, plan)
@@ -86,6 +124,36 @@ final class ExecutorTests: XCTestCase {
         tick(ex, seconds: 1000)
         XCTAssertEqual(ex.state.status, .completed)
         XCTAssertNear(ex.state.distanceBanked, plan.totalDriveDistance, 2)
+    }
+
+    func testDriveUsesActualOriginAndKeepsExactDestination() async throws {
+        let routes = FakeRouteProvider()
+        routes.override = { from, to in [from, offset(to, east: 0.02)] }
+        let run = ScheduledRun(name: "Drive", actions: [
+            RunAction(.wait(seconds: 2)),
+            RunAction(.driveTo(work, speed: nil)),
+        ])
+        let result = try await RunCompiler(routeProvider: routes).compile(
+            run, anchorDate: clock.now, startDate: clock.now, currentLocation: nil, defaultDriveOrigin: home.point
+        )
+        XCTAssertNil(result.plan.segments.first?.location, "A wait before the drive leaves actual GPS alone")
+        let ex = start(run, result.plan)
+        XCTAssertTrue(sink.calls.isEmpty)
+        tick(ex, seconds: 2)
+        XCTAssertEqual(sink.last, home.point)
+        tick(ex, seconds: result.estimatedDuration + 1)
+        XCTAssertEqual(ex.state.status, .completed)
+        XCTAssertEqual(ex.desiredPosition?.point, work.point)
+        XCTAssertEqual(sink.calls.last, .set(work.point))
+        XCTAssertFalse(sink.calls.contains(.stop))
+    }
+
+    func testDriveToNearbyPinStillDeliversItsExactCoordinate() async throws {
+        let pin = PlaceRef(name: "Pin", point: offset(home.point, east: 8))
+        let (run, plan) = try await compile([.setLocation(home), .driveTo(pin, speed: nil)])
+        let ex = start(run, plan)
+        XCTAssertEqual(ex.state.status, .completed)
+        XCTAssertEqual(sink.calls, [.set(home.point), .set(pin.point)])
     }
 
     func testSkipDriveJumpsToDestination() async throws {
@@ -206,7 +274,7 @@ final class ExecutorTests: XCTestCase {
         let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 600)])
         let ex = start(run, plan)
         // During waits the app ticks at most every 15 s (nextWakeDelay).
-        XCTAssertLessThanOrEqual(ex.nextWakeDelay(wallNow: clock.now), 15)
+        XCTAssertLessThanOrEqual(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 15)
         tick(ex, seconds: 60, step: 15.5)
         XCTAssertFalse(ex.state.log.contains { $0.message.contains("Playback continues") })
     }
@@ -303,13 +371,13 @@ final class ExecutorTests: XCTestCase {
     func testWakeDelays() async throws {
         let (run, plan) = try await compile([.setLocation(home), .wait(seconds: 100), .driveTo(work, speed: nil)])
         let ex = start(run, plan)
-        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now), 15)
+        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 15)
         tick(ex, seconds: 95)
-        XCTAssertNear(ex.nextWakeDelay(wallNow: clock.now), 5, 0.01)
+        XCTAssertNear(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 5, 0.01)
         tick(ex, seconds: 6)
-        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now), 1)
+        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 1)
         ex.pause(wallNow: clock.now)
-        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now), 30)
+        XCTAssertEqual(ex.nextWakeDelay(wallNow: clock.now, monotonic: clock.monotonic), 30)
     }
 
     func testLogIsCapped() async throws {

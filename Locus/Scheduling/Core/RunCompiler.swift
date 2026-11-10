@@ -11,6 +11,8 @@ struct RouteResult: Codable, Equatable {
     var providerName: String
     /// Served from the offline cache because live routing failed.
     var fromCache: Bool = false
+    /// Display name from the route provider, when available.
+    var name: String? = nil
 }
 
 enum RouteProviderError: Error, LocalizedError, Equatable {
@@ -29,6 +31,11 @@ enum RouteProviderError: Error, LocalizedError, Equatable {
 /// tests use fakes.
 protocol RouteProvider: AnyObject {
     func route(from: GeoPoint, to: GeoPoint) async throws -> RouteResult
+    func withPostedLimits(_ route: RouteResult) async throws -> RouteResult
+}
+
+extension RouteProvider {
+    func withPostedLimits(_ route: RouteResult) async throws -> RouteResult { route }
 }
 
 /// Remembers the last good route between two points so a run can still start
@@ -99,6 +106,10 @@ final class CachingRouteProvider: RouteProvider {
             throw error
         }
     }
+
+    func withPostedLimits(_ route: RouteResult) async throws -> RouteResult {
+        try await base.withPostedLimits(route)
+    }
 }
 
 enum CompileError: Error, LocalizedError, Equatable {
@@ -119,7 +130,7 @@ enum CompileError: Error, LocalizedError, Equatable {
         case .invalid(let issues):
             return issues.first { $0.severity == .error }?.message ?? "This run has errors."
         case .noStartLocation:
-            return "Drive To needs a starting point. Add a Teleport step first, or teleport somewhere before running."
+            return "Your location is unavailable. Choose a starting place with a Teleport step."
         case .routeFailed(_, let dest, let reason):
             return "Couldn't get a driving route to \(dest): \(reason) Check your connection and try again."
         case .malformedRoute(_, let dest, let reason):
@@ -151,11 +162,14 @@ struct RunCompiler {
     ///   - startDate: when execution begins (≥ anchorDate if started late).
     ///   - currentLocation: what Locus is spoofing now, used when the run's
     ///     first drive has no Set Location before it.
+    ///   - defaultDriveOrigin: actual location, used only when the first drive
+    ///     has no simulated starting point.
     func compile(
         _ run: ScheduledRun,
         anchorDate: Date,
         startDate: Date,
-        currentLocation: GeoPoint?
+        currentLocation: GeoPoint?,
+        defaultDriveOrigin: GeoPoint? = nil
     ) async throws -> CompileResult {
         var issues = RunValidator.validate(run, now: startDate)
         if case .once = run.schedule {
@@ -174,6 +188,7 @@ struct RunCompiler {
         var cursor = startDate
         var routeMemo: [String: RouteResult] = [:]
         var warnedStartAtIDs = Set<UUID>()
+        var driveOrigin = defaultDriveOrigin.flatMap { $0.isValid ? $0 : nil }
 
         func append(_ kind: PlanSegment.Kind, _ e: RunExpander.Expanded, at loc: GeoPoint?) {
             segments.append(PlanSegment(id: segments.count, actionID: e.action.id, iteration: e.iteration, kind: kind, location: loc))
@@ -213,13 +228,18 @@ struct RunCompiler {
 
             case .stopSpoofing:
                 location = nil
+                driveOrigin = nil
                 append(.stop, e, at: nil)
 
             case .driveTo(let place, let custom):
-                guard let from = location else { throw CompileError.noStartLocation(actionID: id) }
+                guard let from = location ?? driveOrigin else { throw CompileError.noStartLocation(actionID: id) }
+                driveOrigin = nil
                 if Geo.distance(from, place.point) < Self.arrivalTolerance {
                     if e.iteration == 0 {
                         issues.append(.warning("Already at \(place.name) — this drive is skipped.", id))
+                    }
+                    if from != place.point {
+                        append(.teleport(place), e, at: place.point)
                     }
                     location = place.point
                     continue
@@ -227,7 +247,7 @@ struct RunCompiler {
                 let key = RouteCache.key(from, place.point)
                 let route: RouteResult
                 if let selected = run.preferredRoutes?[id], selected.origin == from, selected.destination == place.point {
-                    route = selected.route
+                    route = try await routeProvider.withPostedLimits(selected.route)
                 } else if let memo = routeMemo[key] {
                     route = memo
                 } else {
@@ -266,7 +286,7 @@ struct RunCompiler {
                 // simulated location never jumps.
                 let line = (try? Polyline(sanitizing: [from] + road.points + [place.point])) ?? road
                 let reference = SpeedReference.make(
-                    spans: route.speedLimits.map { Self.offset($0, by: Geo.distance(from, road.start)) },
+                    spans: route.speedLimits.map { Self.offset($0, by: gapStart) },
                     routeDistance: line.length,
                     expectedTravelTime: route.expectedTravelTime,
                     travelModeDefault: TravelDefaults.driveSpeed
@@ -293,7 +313,7 @@ struct RunCompiler {
                 )
                 append(.drive(leg), e, at: from)
                 cursor = cursor.addingTimeInterval(profile.duration)
-                location = line.end
+                location = place.point
 
             case .repeatPrevious:
                 // Unrolled by RunExpander; never present here.

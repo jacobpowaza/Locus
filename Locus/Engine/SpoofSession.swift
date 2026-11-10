@@ -251,6 +251,7 @@ final class SpoofSession: ObservableObject {
     func automationStop(pairing: PairingStore) async -> Bool { await performStop(pairing: pairing) }
 
     func startLocationUpdates() { locationKeeper.start(inBackground: isSpoofing) }
+    var coreLocationFixSummary: String { locationKeeper.fixSummary }
 
     func startJoystick(pairing: PairingStore) {
         guard canControlManually(), checkPairing(pairing) else { return }
@@ -311,15 +312,15 @@ final class SpoofSession: ObservableObject {
                 if Task.isCancelled { break }
                 let distance = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
                     .distance(from: CLLocation(latitude: next.latitude, longitude: next.longitude))
-                var speed = mode.baseSpeed * Double.random(in: 0.88...1.12)
-                speed = max(0.8, speed)
+                guard distance > 0 else { continue }
+                let speed = max(0.8, mode.baseSpeed * Double.random(in: 0.88...1.12))
                 let stepMeters: CLLocationDistance = min(12, max(4, speed * 0.5))
                 let steps = max(1, Int(ceil(distance / stepMeters)))
+                let delay = distance / Double(steps) / speed
                 for i in 1...steps {
                     if Task.isCancelled { break }
                     let t = Double(i) / Double(steps)
                     let coord = Geo.interpolate(GeoPoint(previous), GeoPoint(next), t).coordinate
-                    let delay = stepMeters / speed
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     guard !Task.isCancelled else { return }
                     guard await self.apply(coord, pairing: pairing, markRecent: false) else {
@@ -461,7 +462,7 @@ final class SpoofSession: ObservableObject {
     private func connectionMessage(_ error: LocationEngineError) -> String {
         if case .tunnelCreate = error {
             if cellularOnly {
-                return "Couldn’t start a connection over cellular. Join Wi‑Fi, connect the helper in Settings, and try again."
+                return "Couldn’t reach the location service. With LocalDevVPN connected, briefly turn off Cellular Data and retry. Turn data back on after Locus shows Active."
             }
             return "Couldn’t reach this iPhone’s location service. Check the connection in Settings and try again."
         }

@@ -1,6 +1,6 @@
 # Locus
 
-Free and open-source iPhone location teleport. Tap the map, search a place, or drive a route — Locus sends test coordinates to Apple’s **developer location service**. See the [validation matrix](docs/OVERHAUL.md) for cross-app and device-dependent behavior.
+Free and open-source iPhone location teleport. Touch and hold the map, search for a place, or drive a route — Locus sends test coordinates to Apple’s **developer location service**. See the [validation matrix](docs/OVERHAUL.md) for cross-app and device-dependent behavior.
 
 <p align="center">
   <img src="docs/screenshots/map.png" alt="Locus map with spoof pin" width="180" />
@@ -14,7 +14,8 @@ Free and open-source iPhone location teleport. Tap the map, search a place, or d
 - Map search for businesses, addresses, cities, landmarks, coordinates, and supported map links
 - Place cards for teleport, drive, walk, schedule, and save. Home, Work, recents, favorites, and named collections
 - Route alternatives, waypoints, saved road trips, and a live navigation dashboard
-- Follow Speed Limit, Above Speed Limit, Variable Speed, and Constant Speed. MapKit reference speeds and traffic stops are labeled as estimates or simulations
+- Compare Apple Maps routes in Directions. Set a fixed or timed speed offset, vary speed, or draw custom speed zones under Speed and Options. Posted limits come from OpenStreetMap where the route matches
+- End a drive by arriving at its destination, clearing simulation to return to your current GPS location, or following roads back to the last actual location fix
 - **Automated Runs** with a visual step editor, saved templates, schedules, history, and reminders. See [how scheduling works](docs/SCHEDULED_RUNS.md)
 - Live joystick, GPX import, first-run setup, and connection diagnostics
 
@@ -42,13 +43,23 @@ Locus uses the MIT-licensed [idevice](https://github.com/jkcoxson/idevice) FFI t
 
 Also install **[LocalDevVPN](https://apps.apple.com/us/app/localdevvpn/id6755608044)** (loopback tunnel, default `10.7.0.1`), then sideload Locus.
 
-Locus tries the configured connection on any network. LocalDevVPN documents a cellular-only peer reachability problem on affected iPhones. Join Wi‑Fi if a new connection fails. See [the connection audit](docs/OVERHAUL.md#cellular-and-tunnel).
+Locus tries the configured connection on any network. LocalDevVPN documents a cellular-only peer reachability problem on affected iPhones. See [starting without Wi-Fi](SETUP.md#start-without-wi-fi) for the temporary Cellular Data toggle sequence.
 
 ### Location in other apps
 
 iOS can flag developer-generated fixes as simulated. Apps may use their own
 location validation or server-side logic. See the [compatibility matrix](docs/OVERHAUL.md#cross-application-validation)
 for what was tested.
+
+## Development
+
+Use [`codex/locus-navigation-overhaul`](https://github.com/jacobpowaza/Locus/tree/codex/locus-navigation-overhaul)
+on the Locus fork as the base for development and source builds.
+
+```bash
+git clone --branch codex/locus-navigation-overhaul https://github.com/jacobpowaza/Locus.git
+cd Locus
+```
 
 ## Build
 

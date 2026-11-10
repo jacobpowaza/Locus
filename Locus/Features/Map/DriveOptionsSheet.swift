@@ -20,7 +20,10 @@ struct DriveOptionsSheet: View {
     @State private var editingPlace: PlaceField?
     @State private var editMode: EditMode = .inactive
     @State private var saved = false
-    @State private var mapRevision = UUID()
+    @State private var position: MapCameraPosition = .automatic
+    @State private var panelHeight: CGFloat = 0
+    @State private var routeLeg: UUID?
+    @State private var showOptions = false
     let onStarted: () -> Void
 
     private enum PlaceField: Identifiable {
@@ -90,133 +93,358 @@ struct DriveOptionsSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                previewSection
-                stopsSection
-                Section("Route Name") { TextField("Route name", text: $draft.name) }
-                Section("Presets") {
-                    Picker("Driving preset", selection: preset) {
-                        ForEach(Preset.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                }
-                SpeedPolicyEditor(policy: $draft.defaultSpeed, unit: runs.unit, referenceSource: nil)
-                motionSection
-            }
-            .environment(\.editMode, $editMode)
-            .navigationTitle("Plan a Drive")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(saved ? "Saved" : "Save Route", action: save)
-                        .disabled(!hasRoute || saved)
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                Button(action: start) {
-                    Label("Start Drive", systemImage: "car.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .locusProminentButton()
-                .disabled(!hasRoute || runs.isBusy)
-                .padding(12)
-                .background(.bar)
-            }
-            .sheet(item: $editingPlace) { field in
-                LocationPickerView(initial: place(for: field)) { place in
-                    switch field {
-                    case .origin: origin = place
-                    case .newStop:
-                        stops.insert(RunAction(.driveTo(place, speed: nil)), at: max(0, stops.count - 1))
-                    case .stop(let id):
-                        if let i = stops.firstIndex(where: { $0.id == id }) {
-                            stops[i].kind = .driveTo(place, speed: nil)
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                routeMap
+                    .safeAreaPadding(.bottom, panelHeight + 12)
+                    .ignoresSafeArea(edges: .top)
+                VStack(spacing: 10) {
+                    header
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            stopsCard
+                            routeCards
                         }
                     }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: max(150, geometry.size.height * 0.45))
+                    if !isRouting, routedRequest == request, routeError == nil, !alternatives.isEmpty {
+                        goCard
+                    }
+                }
+                .padding(12)
+                .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+            }
+        }
+        .sheet(isPresented: $showOptions) { optionsSheet }
+        .sheet(item: $editingPlace) { field in
+            LocationPickerView(initial: place(for: field)) { place in
+                switch field {
+                case .origin: origin = place
+                case .newStop:
+                    stops.insert(RunAction(.driveTo(place, speed: nil)), at: max(0, stops.count - 1))
+                case .stop(let id):
+                    if let i = stops.firstIndex(where: { $0.id == id }) {
+                        stops[i].kind = .driveTo(place, speed: nil)
+                    }
                 }
             }
-            .task(id: request) { await findRoutes(for: request) }
-            .task(id: PreviewRequest(trip: trip, ready: !isRouting && routeError == nil)) {
-                saved = false
-                preview = nil
-                guard !isRouting, routeError == nil else { return }
-                let candidate = trip
-                let result = await runs.preview(candidate)
-                guard !Task.isCancelled else { return }
-                preview = result
-                previewedTrip = candidate
-            }
-            .onChange(of: trip.preferredRoutes) { _, _ in mapRevision = UUID() }
+        }
+        .task(id: request) { await findRoutes(for: request) }
+        .task(id: PreviewRequest(trip: trip, ready: routedRequest == request && !isRouting && routeError == nil)) {
+            saved = false
+            guard routedRequest == request, !isRouting, routeError == nil else { return }
+            let candidate = trip
+            let result = await runs.preview(candidate)
+            guard !Task.isCancelled else { return }
+            preview = result
+            previewedTrip = candidate
         }
     }
 
-    private var previewSection: some View {
-        Section {
-            if isRouting {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Finding roads…")
-                }
-            } else if let routeError {
-                Label(routeError, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                if origin != nil { Button("Try Again") { retry += 1 } }
-            } else if let plan = preview?.plan, plan.totalDriveDistance > 0 {
-                RoutePreviewMap(plan: plan, current: nil)
-                    .id(mapRevision)
-                    .frame(height: 210)
-                    .clipShape(.rect(cornerRadius: 16))
-                let fmt = RunFormat(unit: runs.unit)
-                LabeledContent("Distance", value: fmt.distance(plan.totalDriveDistance))
-                if let duration = preview?.estimatedDuration {
-                    LabeledContent("Simulated travel time", value: RunFormat.eta(duration))
-                }
-                if alternatives.values.joined().contains(where: \.fromCache) {
-                    Label("Using a previously saved road route", systemImage: "arrow.down.circle")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            } else if let preview {
-                Label(preview.error ?? "Choose a destination farther from your starting point.", systemImage: "info.circle")
-            } else {
-                ProgressView("Updating trip…")
+    private var header: some View {
+        HStack(alignment: .top) {
+            Button { showOptions = true } label: {
+                Image(systemName: "slider.horizontal.3")
             }
+            .buttonStyle(LocusRoundButtonStyle())
+            .accessibilityLabel("Drive options")
+            Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                Label("Directions", systemImage: "car.fill")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Button { showOptions = true } label: {
+                    Text("Speed and Options")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(LocusTheme.accentText)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+            }
+            .multilineTextAlignment(.center)
+            Spacer(minLength: 0)
+            Button { dismiss() } label: { Image(systemName: "xmark") }
+                .buttonStyle(LocusRoundButtonStyle())
+                .accessibilityLabel("Close directions")
         }
     }
 
-    private var stopsSection: some View {
-        Section {
-            Button { editingPlace = .origin } label: {
-                LabeledContent("From", value: origin?.name ?? "Choose starting point")
+    private var routeMap: some View {
+        let visibleRoutes = routedRequest == request && !isRouting ? alternatives : [:]
+        return Map(position: $position) {
+            ForEach(stops) { stop in
+                if let options = visibleRoutes[stop.id] {
+                    let selected = choices[stop.id, default: 0]
+                    ForEach(options.indices.filter { $0 != selected }, id: \.self) { index in
+                        MapPolyline(coordinates: options[index].points.map(\.coordinate))
+                            .stroke(.blue.opacity(0.45), style: routeStroke(width: 5))
+                    }
+                    if let option = options[safe: selected] {
+                        MapPolyline(coordinates: option.points.map(\.coordinate))
+                            .stroke(.blue, style: routeStroke(width: 7))
+                    }
+                }
+            }
+
+            if let leg = activeLeg, let options = visibleRoutes[leg.id], options.count > 1 {
+                ForEach(options.indices, id: \.self) { index in
+                    let route = options[index]
+                    if let line = try? Polyline(sanitizing: route.points), let time = route.expectedTravelTime {
+                        let fraction = 0.30 + 0.45 * Double(index) / Double(options.count - 1)
+                        let selected = index == choices[leg.id, default: 0]
+                        Annotation("Route \(index + 1)", coordinate: line.point(atDistance: line.length * fraction).coordinate) {
+                            Button {
+                                choices[leg.id] = index
+                            } label: {
+                                Text(RunFormat.eta(time))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(selected ? Color.white : LocusTheme.accentText)
+                                    .padding(.horizontal, 12)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .background(selected ? Color(red: 0, green: 0.37, blue: 0.78) : Color(uiColor: .secondarySystemGroupedBackground),
+                                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Route \(index + 1), \(RunFormat.eta(time))")
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                        .annotationTitles(.hidden)
+                    }
+                }
+            }
+            if let origin {
+                Marker(origin.name, systemImage: "location.fill", coordinate: origin.point.coordinate)
+                    .tint(.blue)
             }
             ForEach(stops) { stop in
                 if case .driveTo(let place, _) = stop.kind {
-                    Button { editingPlace = .stop(stop.id) } label: {
-                        LabeledContent(stop.id == stops.last?.id ? "To" : "Stop", value: place.name)
-                    }
-                    if let options = alternatives[stop.id], options.count > 1 {
-                        Picker("Route to \(place.name)", selection: Binding(
-                            get: { choices[stop.id, default: 0] }, set: { choices[stop.id] = $0 }
-                        )) {
-                            ForEach(options.indices, id: \.self) { index in
-                                Text(routeLabel(options[index], index: index)).tag(index)
-                            }
-                        }
+                    Marker(place.name, systemImage: stop.id == stops.last?.id ? "flag.checkered" : "mappin",
+                           coordinate: place.point.coordinate)
+                        .tint(.orange)
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .realistic))
+        .mapControls { MapCompass() }
+    }
+
+    private func routeStroke(width: CGFloat) -> StrokeStyle {
+        StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
+    }
+
+    private var stopsCard: some View {
+        VStack(spacing: 0) {
+            stopRow(origin?.name ?? "Choose Starting Point", detail: "From", icon: "location.fill", color: .blue) {
+                editingPlace = .origin
+            }
+            ForEach(stops) { stop in
+                if case .driveTo(let place, _) = stop.kind {
+                    Divider().padding(.leading, 48)
+                    let isDestination = stop.id == stops.last?.id
+                    stopRow(place.name, detail: isDestination ? "To" : "Stop",
+                            icon: isDestination ? "flag.checkered" : "mappin", color: .orange) {
+                        editingPlace = .stop(stop.id)
                     }
                 }
             }
-            .onMove { stops.move(fromOffsets: $0, toOffset: $1) }
-            .onDelete { if $0.count < stops.count { stops.remove(atOffsets: $0) } }
-            Button { editingPlace = .newStop } label: { Label("Add Stop", systemImage: "plus") }
-        } header: {
-            HStack {
-                Text("Stops")
-                Spacer()
-                if stops.count > 1 { EditButton() }
+            Divider().padding(.leading, 48)
+            Button { editingPlace = .newStop } label: {
+                Label("Add Stop", systemImage: "plus.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LocusTheme.accentText)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-        } footer: {
-            if let origin { Text("Playback begins at \(origin.name).") }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+        }
+        .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func stopRow(_ title: String, detail: String, icon: String, color: Color,
+                         action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(color.gradient, in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var activeLeg: RunAction? {
+        stops.first { $0.id == routeLeg && alternatives[$0.id] != nil }
+            ?? stops.last { alternatives[$0.id] != nil }
+    }
+
+    @ViewBuilder
+    private var routeCards: some View {
+        if isRouting || (routedRequest != request && routeError == nil) {
+            ProgressView("Finding routes…").frame(minHeight: 44)
+        } else if let routeError {
+            VStack(spacing: 4) {
+                Label(routeError, systemImage: "exclamationmark.triangle").font(.subheadline)
+                if origin != nil { Button("Try Again") { retry += 1 }.frame(minHeight: 44) }
+            }
+        } else if !alternatives.isEmpty {
+            if alternatives.count > 1, let activeLeg {
+                Picker("Compare Routes To", selection: Binding(
+                    get: { activeLeg.id }, set: { routeLeg = $0 }
+                )) {
+                    ForEach(stops) { stop in
+                        if alternatives[stop.id] != nil, case .driveTo(let place, _) = stop.kind {
+                            Text(place.name).tag(stop.id)
+                        }
+                    }
+                }
+                .frame(minHeight: 44)
+            }
+
+            if let activeLeg, let options = alternatives[activeLeg.id], options.count > 1 {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(options.indices, id: \.self) { index in
+                            routeChoice(options, index: index, legID: activeLeg.id)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+        } else {
+            Text("Choose a destination farther from your starting point.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func routeChoice(_ options: [RouteResult], index: Int, legID: UUID) -> some View {
+        let route = options[index]
+        let chosen = choices[legID, default: 0] == index
+        let time = route.expectedTravelTime
+        let fastest = time != nil && time == options.compactMap(\.expectedTravelTime).min()
+        let distance = (try? Polyline(sanitizing: route.points).length) ?? 0
+        return Button {
+            choices[legID] = index
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(time.map(RunFormat.eta) ?? "Route \(index + 1)")
+                    .font(.headline)
+                Text(fastest ? "Fastest · \(RunFormat(unit: runs.unit).distance(distance))"
+                     : RunFormat(unit: runs.unit).distance(distance))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let name = route.name {
+                    Text(name)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 160, alignment: .leading)
+                }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(minHeight: 54)
+            .background(chosen ? Color.blue.opacity(0.18) : Color.primary.opacity(0.07),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
+    }
+
+    private var goCard: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                if previewedTrip == trip, let preview {
+                    if let duration = preview.estimatedDuration, let plan = preview.plan {
+                        Text(RunFormat.eta(duration)).font(.title2.weight(.bold))
+                        Text("\(RunFormat.time(.now.addingTimeInterval(duration))) ETA · \(RunFormat(unit: runs.unit).distance(plan.totalDriveDistance))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text("Simulated travel time")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(preview.error ?? "This drive is unavailable.").font(.subheadline)
+                    }
+                } else {
+                    ProgressView("Calculating drive…").font(.subheadline)
+                }
+            }
+            Spacer(minLength: 0)
+            Button(action: start) {
+                Text("GO")
+                    .font(.headline.weight(.bold))
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 50, minHeight: 48)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .tint(Color(red: 0.06, green: 0.46, blue: 0.20))
+            .disabled(!hasRoute || runs.isBusy)
+            .accessibilityLabel("Start drive")
+        }
+        .padding(12)
+        .background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private var optionsSheet: some View {
+        NavigationStack {
+            Form {
+                SpeedPolicyEditor(policy: $draft.defaultSpeed, unit: runs.unit, referenceSource: nil)
+                if let plan = preview?.plan, plan.segments.contains(where: { segment in
+                    if case .drive(let leg) = segment.kind { return leg.profile.hasPostedLimits }
+                    return false
+                }) {
+                    Section {
+                        Link("Speed limits © OpenStreetMap contributors",
+                             destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                    }
+                }
+                SpeedZonesSection(zones: $draft.motion.speedZones, plan: preview?.plan, unit: runs.unit)
+                motionSection
+                Section("Stops") {
+                    ForEach(stops) { stop in
+                        if case .driveTo(let place, _) = stop.kind { Text(place.name) }
+                    }
+                    .onMove { stops.move(fromOffsets: $0, toOffset: $1) }
+                    .onDelete { if $0.count < stops.count { stops.remove(atOffsets: $0) } }
+                    if stops.count > 1 { EditButton() }
+                }
+                Section("Save Route") {
+                    TextField("Route name", text: $draft.name)
+                    Button(saved ? "Saved" : "Save Route", action: save).disabled(!hasRoute || saved)
+                    if alternatives.values.joined().contains(where: \.fromCache) {
+                        Label("Using a previously saved road route", systemImage: "arrow.down.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .environment(\.editMode, $editMode)
+            .navigationTitle("Speed and Options")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { showOptions = false } }
+            }
         }
     }
 
@@ -243,30 +471,6 @@ struct DriveOptionsSheet: View {
         }
     }
 
-    private enum Preset: String, CaseIterable, Identifiable {
-        case normal = "Normal", slow = "Slow", fast = "Fast", custom = "Custom"
-        var id: String { rawValue }
-    }
-
-    private var preset: Binding<Preset> {
-        Binding {
-            switch draft.defaultSpeed {
-            case .followLimit: return .normal
-            case .belowLimit: return .slow
-            case .aboveLimit: return .fast
-            default: return .custom
-            }
-        } set: { value in
-            let offset = runs.unit.toMetersPerSecond(5)
-            switch value {
-            case .normal: draft.defaultSpeed = .followLimit
-            case .slow: draft.defaultSpeed = .belowLimit(offset)
-            case .fast: draft.defaultSpeed = .aboveLimit(offset)
-            case .custom: draft.defaultSpeed = .variable
-            }
-        }
-    }
-
     private var realism: Binding<DriveRealism> {
         Binding(get: { draft.motion.realism ?? .off }, set: { draft.motion.realism = $0 })
     }
@@ -277,13 +481,6 @@ struct DriveOptionsSheet: View {
             return place
         }
         return nil
-    }
-
-    private func routeLabel(_ route: RouteResult, index: Int) -> String {
-        let distance = (try? Polyline(sanitizing: route.points).length) ?? 0
-        let formatted = RunFormat(unit: runs.unit).distance(distance)
-        let eta = route.expectedTravelTime.map { " · \(RunFormat.eta($0))" } ?? ""
-        return "Route \(index + 1) · \(formatted)\(eta)"
     }
 
     private func findRoutes(for request: Request) async {
@@ -301,18 +498,48 @@ struct DriveOptionsSheet: View {
                 guard case .driveTo(let place, _) = stop.kind else { continue }
                 if Geo.distance(from, place.point) >= RunCompiler.arrivalTolerance {
                     let existing = draft.preferredRoutes?[stop.id]
-                    if let existing, existing.origin == from, existing.destination == place.point,
-                       request.retry == 0 {
-                        found[stop.id] = alternatives[stop.id] ?? [existing.route]
-                    } else {
-                        found[stop.id] = try await runs.routeOptions(from: from, to: place.point)
+                    do {
+                        let options = try await runs.routeOptions(from: from, to: place.point)
+                        if let existing, existing.origin == from, existing.destination == place.point {
+                            var saved = existing.route
+                            saved.fromCache = options.allSatisfy(\.fromCache)
+                            found[stop.id] = [saved] + options.filter { $0.points != saved.points }
+                        } else {
+                            found[stop.id] = options
+                        }
+                    } catch {
+                        try Task.checkCancellation()
+                        guard let existing, existing.origin == from, existing.destination == place.point else { throw error }
+                        var cached = existing.route
+                        cached.fromCache = true
+                        found[stop.id] = [cached]
                     }
                 }
                 from = place.point
             }
             try Task.checkCancellation()
-            choices = choices.filter { id, index in found[id]?.indices.contains(index) == true }
+            var retained: [UUID: Int] = [:]
+            for (id, options) in found {
+                if let previous = alternatives[id]?[safe: choices[id, default: 0]],
+                   let index = options.firstIndex(where: { $0.points == previous.points }) {
+                    retained[id] = index
+                }
+            }
+            choices = retained
             alternatives = found
+            let points = found.values.joined().flatMap(\.points)
+                + request.stops.compactMap { stop in
+                    if case .driveTo(let place, _) = stop.kind { return place.point }
+                    return nil
+                } + [request.origin].compactMap { $0 }
+            let rect = points.reduce(MKMapRect.null) { rect, point in
+                let mapPoint = MKMapPoint(point.coordinate)
+                return rect.union(MKMapRect(origin: mapPoint, size: MKMapSize(width: 1, height: 1)))
+            }
+            if !rect.isNull {
+                let inset = max(400, max(rect.width, rect.height) * 0.14)
+                position = .rect(rect.insetBy(dx: -inset, dy: -inset))
+            }
             routedRequest = request
             isRouting = false
         } catch {
@@ -379,6 +606,7 @@ struct SavedRoutesView: View {
                 DriveOptionsSheet(saved: route) {
                     dismiss()
                 }
+                .presentationDragIndicator(.hidden)
             }
             .confirmationDialog("Delete saved route?", isPresented: Binding(
                 get: { deletion != nil }, set: { if !$0 { deletion = nil } }

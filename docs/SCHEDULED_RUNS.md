@@ -50,11 +50,12 @@ older saved runs decode unchanged).
 
 | Mode | Behaviour |
 |---|---|
-| Follow speed limit | target = road reference speed |
+| Follow speed limit | target = posted limit where available |
 | Constant | target = fixed value (e.g. 35 mph) |
-| Above Speed Limit | Reference plus a fixed or percentage offset |
+| Above Speed Limit | Posted limit plus a fixed or percentage offset |
+| Above for Part of Drive | Fixed offset for a target share of cruising time on roads with posted limits |
 | Variable Speed | Reference with seeded variation and configured motion and traffic assumptions |
-| Below limit | reference − offset |
+| Below limit | Posted limit minus the offset |
 | Custom (per Drive To) | any of the above for one leg |
 
 Every drive also gets the following treatment:
@@ -66,13 +67,16 @@ Every drive also gets the following treatment:
   acceleration, √(3 m/s² × radius), with a floor of about 7 mph.
 - **Arrival**: the car always stops at the destination.
 
-**About "speed limit" data.** Apple MapKit does not expose posted speed limits.
-When a route has none, which is always the case with MapKit, Locus uses Apple's
-ETA-derived **route average speed**, and the UI labels it *"Estimated — route
-average"* or *"Limit (est.)"*. If there's no ETA either, it falls back to a
-default driving speed (13.4 m/s ≈ 30 mph), labelled the same way. Locus never
-presents a fallback as a posted limit. The engine already supports real
-per-road limits (`SpeedLimitSpan`) if a provider that has them is added later.
+Locus sends sampled route coordinates to the Valhalla demo service to match
+posted OpenStreetMap limits to the Apple Maps route. Coverage depends on
+map data and matching quality. Where there is no match, Locus uses the labeled
+route average or default driving speed and skips above- or below-limit offsets.
+[OpenStreetMap contributors](https://www.openstreetmap.org/copyright) · [Valhalla service](https://valhalla.github.io/valhalla/#demo-server)
+
+In **Directions → Speed and Options**, use **Draw Speed Zone** to tap an outline on the map and
+choose a target speed. The target overrides the selected speed inside the
+outline, and overlapping zones use the lowest target. Zones are saved with
+the route.
 
 The ETA is recomputed whenever the speed settings change, both in the editor
 preview and live. During a run, the **Speed** button re-solves the current
@@ -84,8 +88,12 @@ Legs with a custom speed keep it.
 The live dashboard shows: a map with the route and a distinct **Simulated**
 vehicle marker, simulated speed, the limit or estimate, remaining distance for
 the leg and the whole run, elapsed time, ETAs, step progress, and Pause /
-Resume / Skip / Speed / End (stay put, or stop spoofing). A banner on the main
-map follows the active run.
+Resume / Skip / Speed / End. A completed drive holds the exact destination.
+End Drive lets you arrive immediately, clear simulation to return to current
+GPS, or drive back to the last actual location fix. For trips from the map,
+the destination is the final stop. For automations, it
+is the current drive step's destination. A banner on the main map follows
+the active run.
 
 History records completed, failed, cancelled, and missed runs, each with its
 log. **Export diagnostics** shares a text report that includes platform notes.

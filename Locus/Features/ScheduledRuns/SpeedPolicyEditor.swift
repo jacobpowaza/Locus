@@ -11,6 +11,7 @@ struct SpeedPolicyEditor: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case follow = "Follow Speed Limit"
         case above = "Above Speed Limit"
+        case timed = "Above for Part of Drive"
         case variable = "Variable Speed"
         case constant = "Constant Speed"
         case below = "Below Speed Limit"
@@ -24,6 +25,7 @@ struct SpeedPolicyEditor: View {
             case .variable: return .variable
             case .constant: return .constant
             case .aboveLimit, .aboveLimitPercent: return .above
+            case .aboveLimitForTime: return .timed
             case .belowLimit: return .below
             }
         } set: { m in
@@ -32,6 +34,7 @@ struct SpeedPolicyEditor: View {
             case .variable: policy = .variable
             case .constant: policy = .constant(unit.toMetersPerSecond(unit == .mph ? 35 : 50))
             case .above: policy = .aboveLimit(unit.toMetersPerSecond(5))
+            case .timed: policy = .aboveLimitForTime(offset: unit.toMetersPerSecond(5), percent: 30)
             case .below: policy = .belowLimit(unit.toMetersPerSecond(5))
             }
         }
@@ -42,7 +45,7 @@ struct SpeedPolicyEditor: View {
         Binding {
             switch policy {
             case .followLimit, .variable: return 0
-            case .aboveLimitPercent(let p): return p
+            case .aboveLimitPercent(let p), .aboveLimitForTime(_, let p): return p
             case .constant(let v), .aboveLimit(let v), .belowLimit(let v): return unit.fromMetersPerSecond(v).rounded()
             }
         } set: { newValue in
@@ -52,6 +55,7 @@ struct SpeedPolicyEditor: View {
             case .constant: policy = .constant(mps)
             case .aboveLimit: policy = .aboveLimit(mps)
             case .aboveLimitPercent: policy = .aboveLimitPercent(newValue)
+            case .aboveLimitForTime(let offset, _): policy = .aboveLimitForTime(offset: offset, percent: newValue)
             case .belowLimit: policy = .belowLimit(mps)
             }
         }
@@ -59,7 +63,7 @@ struct SpeedPolicyEditor: View {
 
     private var range: ClosedRange<Double> {
         switch policy {
-        case .aboveLimitPercent: return 0...100
+        case .aboveLimitPercent, .aboveLimitForTime: return 0...100
         case .constant: return unit == .mph ? 1...120 : 2...190
         default: return 0...(unit == .mph ? 25 : 40)
         }
@@ -81,12 +85,12 @@ struct SpeedPolicyEditor: View {
 
             switch policy {
             case .followLimit:
-                Label("Uses the route’s reference speed.", systemImage: "road.lanes")
+                Label("Uses posted limits where available.", systemImage: "road.lanes")
                     .font(.subheadline)
             case .variable:
                 Label("Varies speed along the route and slows for turns and stops.", systemImage: "waveform.path")
                     .font(.subheadline)
-            case .constant, .aboveLimit, .aboveLimitPercent, .belowLimit:
+            case .constant, .aboveLimit, .aboveLimitPercent, .aboveLimitForTime, .belowLimit:
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(valueTitle).foregroundStyle(.secondary)
@@ -94,12 +98,21 @@ struct SpeedPolicyEditor: View {
                         Text("\(Int(displayValue.wrappedValue))")
                             .font(.title2.weight(.bold).monospacedDigit())
                             .contentTransition(.numericText())
-                        Text(percentage.wrappedValue ? "%" : unit.label).foregroundStyle(.secondary)
+                        Text(percentage.wrappedValue || mode.wrappedValue == .timed ? "%" : unit.label).foregroundStyle(.secondary)
                     }
                     Slider(value: displayValue, in: range, step: 1)
                         .tint(LocusTheme.accent)
+                        .accessibilityLabel(valueTitle)
                 }
                 .animation(.snappy, value: displayValue.wrappedValue)
+            }
+            if case .aboveLimitForTime(let offset, let percent) = policy {
+                Stepper(value: Binding(
+                    get: { unit.fromMetersPerSecond(offset).rounded() },
+                    set: { policy = .aboveLimitForTime(offset: unit.toMetersPerSecond($0), percent: percent) }
+                ), in: 1...(unit == .mph ? 25 : 40)) {
+                    LabeledContent("Over the Limit By", value: RunFormat(unit: unit).speed(offset))
+                }
             }
         } header: {
             Text("Speed")
@@ -121,6 +134,7 @@ struct SpeedPolicyEditor: View {
         switch policy {
         case .constant: return "Speed"
         case .aboveLimit, .aboveLimitPercent: return "Over the limit by"
+        case .aboveLimitForTime: return "Target share of cruising time"
         case .belowLimit: return "Under the limit by"
         case .followLimit, .variable: return ""
         }
@@ -130,7 +144,10 @@ struct SpeedPolicyEditor: View {
         if !policy.usesReference {
             return "Holds this speed where the road allows, still slowing for turns."
         }
-        if referenceSource == .postedLimits { return "Follows posted speed limits." }
-        return "Apple Maps supplies a route-wide estimated average speed. Posted limits are unavailable."
+        if case .aboveLimitForTime = policy {
+            return "Targets this share of cruising time on roads with posted limits. Turns, stops, and speed zones can change the actual share."
+        }
+        return referenceSource?.explanation
+            ?? "Locus checks the route against OpenStreetMap for posted limits. Speed offsets apply only where a limit is available."
     }
 }

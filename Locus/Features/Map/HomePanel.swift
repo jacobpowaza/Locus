@@ -15,6 +15,8 @@ struct HomePanel: View {
     @Binding var expanded: Bool
     var walkingTo: UUID?
     var here: CLLocationCoordinate2D?
+    var resolvingSearch: Bool
+    var onOpenSettings: () -> Void
 
     var onPickCompletion: (MKLocalSearchCompletion) -> Void
     var onSubmitSearch: () -> Void
@@ -51,6 +53,13 @@ struct HomePanel: View {
                 .gesture(DragGesture(minimumDistance: 12).onEnded { value in
                     withAnimation(.snappy) { expanded = value.translation.height < 0 }
                 })
+            }
+            if isSearching || selected == nil {
+                MapSearchBar(searchText: $searchText, searchFocused: searchFocused,
+                             resolvingSearch: resolvingSearch, onSubmitSearch: onSubmitSearch,
+                             onOpenSettings: onOpenSettings)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
             }
             if let place = selected, !isSearching {
                 PlaceCard(
@@ -138,7 +147,9 @@ struct HomePanel: View {
                     }
                 }
             }
-            .padding(.top, 6)
+            .padding(.top, 4)
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.horizontal, 12)
         }
         .scrollDismissesKeyboard(.immediately)
         .frame(maxHeight: .infinity)
@@ -195,10 +206,15 @@ struct HomePanel: View {
             }
             .font(.subheadline.weight(.semibold))
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .controlSize(.large)
             .padding(.horizontal, 14)
 
             if expanded {
+                Text("Places")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 16)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(PlaceShortcut.allCases) { shortcutKind in
@@ -229,6 +245,10 @@ struct HomePanel: View {
                     }
                     .padding(.horizontal, 16)
                 }
+                Text("Touch and hold the map to drop a pin.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
             }
         }
         .padding(.top, 4)
@@ -290,8 +310,8 @@ private struct NowCard: View {
             card(symbol: "dpad.fill", color: LocusTheme.accent,
                  title: "Joystick", subtitle: "\(session.travelMode.title) speed · drag the pad to move", onTap: nil)
         } else if let dest = session.followingRouteTo {
-            card(symbol: "figure.walk", color: LocusTheme.accent,
-                 title: "Walking to \(dest)", subtitle: "Following the selected route", onTap: nil)
+            card(symbol: "point.topleft.down.to.point.bottomright.curvepath", color: LocusTheme.accent,
+                 title: "On the way to \(dest)", subtitle: "Following the selected route", onTap: nil)
         } else if session.isSpoofing || session.status == .connecting {
             card(symbol: "location.fill", color: LocusTheme.accent,
                  title: session.simulatedName ?? "Simulated location",
@@ -629,7 +649,7 @@ struct MapSearchBar: View {
                 Image(systemName: "magnifyingglass")
                     .font(.body.weight(.medium))
                     .foregroundStyle(.secondary)
-                TextField("Search places or paste a map link", text: $searchText)
+                TextField("Search Maps", text: $searchText)
                     .font(.body)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
@@ -653,16 +673,21 @@ struct MapSearchBar: View {
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 46)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.09)))
+            .background(Color.primary.opacity(0.09), in: Capsule())
 
             if isSearching {
-                Button("Cancel") {
+                Button {
                     searchText = ""
                     searchFocused.wrappedValue = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 46, height: 46)
+                        .background(Color.primary.opacity(0.09), in: Circle())
+                        .contentShape(Circle())
                 }
-                .font(.body)
-                .frame(minHeight: 44)
-                .foregroundStyle(LocusTheme.accentText)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
                 Button(action: onOpenSettings) {
@@ -677,8 +702,6 @@ struct MapSearchBar: View {
                 .accessibilityLabel("Settings")
             }
         }
-        .padding(5)
-        .locusGlass(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
 }

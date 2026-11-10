@@ -58,7 +58,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Connection")
                 } footer: {
-                    Text("If a new session fails over cellular, join Wi‑Fi, connect LocalDevVPN, and try again.")
+                    Text("Without Wi‑Fi, connect LocalDevVPN and plan your drive while online. If simulation fails to start, briefly turn off Cellular Data and retry. Turn data back on when Locus shows Active.")
                 }
 
                 Section("Preferences") {
@@ -86,7 +86,7 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("Version", value: appVersion)
-                    Label("Everything stays on this iPhone. No accounts, no tracking.", systemImage: "hand.raised.fill")
+                    Label("Saved places and runs stay on this iPhone. Routes use Apple Maps and posted-limit lookup sends route geometry to a map data service.", systemImage: "hand.raised.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } header: {
@@ -270,10 +270,20 @@ struct AdvancedSettingsView: View {
                 LabeledContent("Observed network path", value: session.networkDescription)
                 LabeledContent("LocalDevVPN interface", value: LocalDevVPN.isConnected ? "Detected" : "Unavailable")
                 LabeledContent("Built-in tunnel", value: TunnelConfig.embeddedProvider ? "Provider bundled" : "External helper required")
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    LabeledContent("Core Location fix", value: session.coreLocationFixSummary)
+                }
                 if let detail = session.connectionDetail {
                     LabeledContent("Last failure", value: detail)
                 }
                 ShareLink(item: runs.diagnosticsReport()) { Label("Export Diagnostics", systemImage: "square.and.arrow.up") }
+            }
+
+            Section("Drive Recognition") {
+                Text("Locus sends simulated positions. iOS and other apps determine speed and motion activity from the data they receive.")
+                    .font(.subheadline)
+                Link("Life360 Drive Detection",
+                     destination: URL(string: "https://support.life360.com/hc/en-us/articles/23053499870487-Drive-Detection-Analysis")!)
             }
 
             Section {

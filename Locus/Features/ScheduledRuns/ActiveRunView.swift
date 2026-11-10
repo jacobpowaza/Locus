@@ -7,6 +7,10 @@ struct ActiveRunView: View {
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.dismiss) private var dismiss
     @State private var confirmCancel = false
+    @State private var endingRunID: UUID?
+    @State private var endingDestination: PlaceRef?
+    @State private var isEndingDrive = false
+    @State private var endError: String?
     @State private var confirmRestart = false
     @State private var showSpeed = false
     @State private var showSteps = false
@@ -26,17 +30,55 @@ struct ActiveRunView: View {
                 finished
             }
         }
-        .confirmationDialog(runs.isOneOffActive ? "End this drive?" : "End this run?", isPresented: $confirmCancel, titleVisibility: .visible) {
-            Button("End & Stay Here") { runs.cancel(stopSpoofing: false) }
-            Button("End & Return to Real Location", role: .destructive) { runs.cancel(stopSpoofing: true) }
+        .confirmationDialog(endingDestination == nil ? "End this run?" : "End this drive?",
+                            isPresented: $confirmCancel, titleVisibility: .visible) {
+            if let destination = endingDestination {
+                Button("Teleport to Current Location") { cancelCurrent(stopSpoofing: true) }
+                Button("Drive Back") {
+                    if let coordinate = session.realCoordinate {
+                        endDrive(at: PlaceRef(name: "Last Actual Location", point: GeoPoint(coordinate)), driving: true)
+                    }
+                }
+                .disabled(session.realCoordinate == nil)
+                Button("Arrive at Destination") { endDrive(at: destination) }
+            } else {
+                Button("End & Stay Here") { cancelCurrent(stopSpoofing: false) }
+                Button("End & Return to Real Location", role: .destructive) { cancelCurrent(stopSpoofing: true) }
+            }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Staying keeps the simulated location where it is now.")
+            if endingDestination != nil {
+                Text(session.realCoordinate == nil
+                     ? "Drive Back needs an actual location fix."
+                     : "Drive Back follows roads to the last actual location Locus received.")
+            } else {
+                Text("Choose where to leave the simulated location.")
+            }
         }
         .confirmationDialog("Restart this drive from the beginning?", isPresented: $confirmRestart, titleVisibility: .visible) {
             Button("Restart Drive", role: .destructive) { runs.restartDrive() }
         }
         .sheet(isPresented: $showSpeed) { speedSheet }
         .sheet(isPresented: $showSteps) { stepsSheet }
+        .alert("Couldn’t End Drive", isPresented: Binding(
+            get: { endError != nil }, set: { if !$0 { endError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(endError ?? "") }
+    }
+
+    private func cancelCurrent(stopSpoofing: Bool) {
+        guard endingRunID == runs.activeRunID else { return }
+        runs.cancel(stopSpoofing: stopSpoofing)
+    }
+
+    private func endDrive(at destination: PlaceRef, driving: Bool = false) {
+        guard let id = endingRunID, !isEndingDrive else { return }
+        isEndingDrive = true
+        Task {
+            endError = await runs.endDrive(at: destination, driving: driving, replacing: id)
+            isEndingDrive = false
+        }
     }
 
     // MARK: Finished / empty
@@ -44,10 +86,18 @@ struct ActiveRunView: View {
     private var finished: some View {
         NavigationStack {
             ContentUnavailableView {
-                Label(runs.lastFinished?.outcome.label ?? "No active run", systemImage: "flag.checkered")
+                Label(runs.canReplayDrive && runs.lastFinished?.outcome == .completed
+                      ? "Arrived" : runs.lastFinished?.outcome.label ?? "No active run",
+                      systemImage: "flag.checkered")
             } description: {
                 if let r = runs.lastFinished {
-                    Text(r.message ?? "\(r.runName) finished. You'll stay at the last simulated location until you tap Turn Off on the map.")
+                    if let message = r.message {
+                        Text(message)
+                    } else if session.needsClear {
+                        Text("\(r.runName) finished. You'll stay at the simulated location until you tap Turn Off on the map.")
+                    } else {
+                        Text("\(r.runName) finished.")
+                    }
                 }
             }
             .toolbar {
@@ -168,6 +218,11 @@ struct ActiveRunView: View {
                     }
                 }
             }
+            if !estimated {
+                Text("© OpenStreetMap contributors")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .runGlassPanel(cornerRadius: 20)
@@ -182,13 +237,14 @@ struct ActiveRunView: View {
             Button { showSteps = true } label: {
                 HStack(spacing: 0) {
                     trayStat(RunFormat.time(s.runEnd, timeZone: tz), "arrival")
-                    trayStat(fmt.distance(s.distanceRemaining), "left")
-                    trayStat(RunFormat.duration(s.activeElapsed), "elapsed")
+                    trayStat(RunFormat.eta(max(0, s.runEnd.timeIntervalSinceNow)), "remaining")
+                    trayStat(fmt.distance(s.distanceRemaining), "distance")
                     Image(systemName: "chevron.up")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                         .frame(width: 20)
                 }
+                .frame(minHeight: 50)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -202,6 +258,22 @@ struct ActiveRunView: View {
                 ProgressView(value: Double(min(s.segmentIndex, s.segmentCount)), total: Double(s.segmentCount))
                     .tint(LocusTheme.accent)
                     .accessibilityLabel("Step \(min(s.segmentIndex + 1, s.segmentCount)) of \(s.segmentCount)")
+            }
+
+            if let destination = runs.driveEndDestination {
+                Label {
+                    Text(destination.name)
+                        .font(.subheadline.weight(.semibold))
+                } icon: {
+                    Image(systemName: "flag.checkered")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.orange.gradient, in: Circle())
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
 
             if let ends = s.holdEnds {
@@ -231,13 +303,18 @@ struct ActiveRunView: View {
                 } label: { Image(systemName: "gauge.with.dots.needle.67percent") }
                     .buttonStyle(LocusRoundButtonStyle())
                     .accessibilityLabel("Change speed")
-                Button { confirmCancel = true } label: { Text("End") }
-                    .buttonStyle(LocusPillButtonStyle(role: .danger))
-                    .accessibilityLabel("End run")
             }
-            .disabled(s.isClearingLocation)
-            .sensoryFeedback(.impact(weight: .light), trigger: s.status)
+            Button {
+                endingRunID = runs.activeRunID
+                endingDestination = runs.driveEndDestination
+                confirmCancel = true
+            } label: {
+                Text(runs.driveEndDestination == nil ? "End Run" : "End Drive")
+            }
+            .buttonStyle(LocusPillButtonStyle(role: .danger, expand: true))
         }
+        .disabled(s.isClearingLocation || isEndingDrive || runs.startingRunID != nil)
+        .sensoryFeedback(.impact(weight: .light), trigger: s.status)
         .padding(14)
         .locusGlass(.regular, in: trayShape)
         .contentShape(trayShape)
@@ -350,6 +427,9 @@ struct ActiveRunView: View {
     }
 
     private func notice(_ s: ExecutionSnapshot) -> (text: String, icon: String, color: Color)? {
+        if isEndingDrive {
+            return ("Preparing the end of this drive…", "arrow.triangle.turn.up.right.diamond", LocusTheme.statusWarn)
+        }
         if s.isClearingLocation {
             return ("Clearing the simulated location…", "location.slash", LocusTheme.statusWarn)
         }

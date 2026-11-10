@@ -23,15 +23,21 @@ extension PlaceRef {
 }
 
 /// Driving routes from Apple Maps (same MKDirections path RouteBuilder uses).
-///
-/// MapKit gives road geometry and an ETA but **no posted speed limits**, so
-/// `speedLimits` is nil and drives use the labelled route-average fallback.
 final class MapKitRouteProvider: RouteProvider {
+    private let limits = PostedRoadLimits()
+
     func route(from: GeoPoint, to: GeoPoint) async throws -> RouteResult {
         guard let route = try await RouteBuilder.routes(from: from, to: to).first else {
             throw RouteProviderError.noRoute
         }
-        return route
+        return try await withPostedLimits(route)
+    }
+
+    func withPostedLimits(_ route: RouteResult) async throws -> RouteResult {
+        guard route.speedLimits == nil else { return route }
+        var enriched = route
+        enriched.speedLimits = try await limits.lookup(for: route.points)
+        return enriched
     }
 }
 
@@ -42,7 +48,7 @@ final class SpoofSessionSink: LocationSink {
     private enum Command: Equatable { case set(GeoPoint), stop }
     private weak var session: SpoofSession?
     private weak var pairing: PairingStore?
-    private var inFlight = false
+    private var inFlight: Task<Void, Never>?
     private var completed: (Command, LocationDelivery)?
     var onReady: (() -> Void)?
 
@@ -61,22 +67,23 @@ final class SpoofSessionSink: LocationSink {
 
     func invalidateCompletion() { completed = nil }
 
+    func waitForDelivery() async { await inFlight?.value }
+
     private func submit(_ command: Command) -> LocationDelivery {
         guard let session, let pairing else { return .failed }
         if let result = completed {
             completed = nil
             if result.0 == command { return result.1 }
         }
-        guard !inFlight, !session.isBusy else { return .pending }
+        guard inFlight == nil, !session.isBusy else { return .pending }
         if case .set = command, !session.canRetryConnection() { return .failed }
-        inFlight = true
-        Task {
+        inFlight = Task {
             let ok: Bool
             switch command {
             case .set(let point): ok = await session.automationSet(point.coordinate, pairing: pairing)
             case .stop: ok = await session.automationStop(pairing: pairing)
             }
-            inFlight = false
+            inFlight = nil
             completed = (command, ok ? .applied : .failed)
             onReady?()
         }

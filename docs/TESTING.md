@@ -101,3 +101,9 @@ From Linux, without Xcode:
    Disk Image is mounted.
 
 The checklist is in [SCHEDULED_RUNS.md § Physical iPhone validation](SCHEDULED_RUNS.md#physical-iphone-validation).
+
+### Compare Core Location with Life360
+
+Use a route and a Life360 Circle you control. Confirm that a real drive is labeled **Drive** under the same account and phone settings. Then compare a simulated route with a sustained speed above 15 mph, where the route's speed settings permit it. Record the **Trip** or **Drive** label in the event history. The map dots mark recorded updates. [Life360 Drive Detection](https://support.life360.com/hc/en-us/articles/23053499870487-Drive-Detection-Analysis) · [Life360 Daily History](https://support.life360.com/hc/en-us/articles/23829025907095-Daily-History)
+
+While the simulated drive is active, check **Settings → Advanced → Core Location fix**. Record whether iOS reports speed and course, whether it flags the fix as simulated, and whether the fix remains recent while Locus runs in the background. Compare the observed speed with the drive dashboard. The developer service takes coordinates, and the dashboard displays playback speed.

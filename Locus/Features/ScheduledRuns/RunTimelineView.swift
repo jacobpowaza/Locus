@@ -114,7 +114,7 @@ struct TimelineRow: View {
             var parts = ["\(RunFormat.time(p.start, timeZone: timeZone))–\(RunFormat.time(p.end, timeZone: timeZone))",
                          "avg \(fmt.speed(leg.profile.averageSpeed))",
                          "max \(fmt.speed(leg.profile.maxSpeed))"]
-            if leg.profile.referenceSource.isFallback { parts.append("limits estimated") }
+            if leg.profile.referenceSource.isFallback { parts.append("posted limits incomplete") }
             if leg.routeFromCache { parts.append("saved route") }
             return parts.joined(separator: " · ")
         case .hold, .waitUntil:

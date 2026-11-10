@@ -2,7 +2,7 @@
 
 ## 1. Sideload the IPA
 
-Install the latest IPA from [Releases](https://github.com/ChrisMack32/Locus/releases) (or build from source) with Feather, SideStore, AltStore, Sideloadly, or LiveContainer.
+Install the latest IPA from [Releases](https://github.com/ChrisMack32/Locus/releases) (or [build from the active development branch](README.md#development)) with Feather, SideStore, AltStore, Sideloadly, or LiveContainer.
 
 Bundle ID: `com.chrismack.locus`
 
@@ -39,4 +39,12 @@ Install [LocalDevVPN](https://apps.apple.com/us/app/localdevvpn/id6755608044), c
 
 ## 4. Teleport
 
-Search or drop a pin, then tap **Teleport To**. If a new session fails on cellular, join Wi‑Fi, connect LocalDevVPN, and try again. The **Active** indicator follows successful responses from the location service. Settings → Advanced shows the observed network path and last connection error.
+Search or drop a pin, then tap **Teleport To**. The **Active** indicator follows successful responses from the location service. Settings → Advanced shows the observed network path and last connection error.
+
+### Start without Wi-Fi
+
+1. Connect LocalDevVPN while Cellular Data is on. Plan your route while you still have internet access.
+2. If the simulation cannot connect, turn off **Cellular Data** while leaving LocalDevVPN connected. Retry **Teleport To** or let the active drive retry. If the drive paused, tap **Resume**.
+3. Wait for Locus to show **Active**, then turn Cellular Data back on. If the session drops, you may need to repeat the sequence.
+
+This startup sequence is reported for other apps using LocalDevVPN and can vary by device and iOS version. [Roam Control mobile-data guide](https://github.com/seanhowarthdev/Roam-Control/blob/main/Documentation/UserGuide.md#mobile-data-connection-flow)

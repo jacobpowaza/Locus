@@ -35,7 +35,10 @@ struct ActionBlockRow: View {
                 ForEach(issues) { IssueLabel(issue: $0) }
             }
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Step \(number): \(accessibilitySentence)")
         .accessibilityHint("Double-tap to edit")
@@ -105,69 +108,74 @@ struct ActionBlockRow: View {
 struct AddActionSheet: View {
     let onPick: (RunActionKind) -> Void
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var session: SpoofSession
+    @State private var search = ""
+    @State private var placeAction: PlaceAction?
+    @State private var selectedKind: RunActionKind?
 
-    private var here: PlaceRef {
-        if let c = session.simulated ?? session.pin ?? session.realCoordinate {
-            return PlaceRef(name: session.suggestedFavoriteName(for: c), point: GeoPoint(c))
-        }
-        return PlaceRef(name: "Choose a place", point: GeoPoint(latitude: .nan, longitude: .nan))
+    private enum PlaceAction: String, Identifiable {
+        case teleport, drive
+        var id: String { rawValue }
     }
 
-    private var options: [(RunActionKind.Category, RunActionKind)] {
-        [
-            (.setLocation, .setLocation(here)),
-            (.driveTo, .driveTo(PlaceRef(name: "Choose a place", point: GeoPoint(latitude: .nan, longitude: .nan)), speed: nil)),
-            (.wait, .wait(seconds: 15 * 60)),
-            (.startAt, .startAt(nextHalfHour(), dayOffset: 0)),
-            (.setSpeed, .setSpeed(.followLimit)),
-            (.stopSpoofing, .stopSpoofing),
-            (.repeatPrevious, .repeatPrevious(count: 1, times: 1)),
-        ]
+    private var categories: [RunActionKind.Category] {
+        RunActionKind.Category.allCases.filter {
+            search.isEmpty || RunsStyle.title($0).localizedCaseInsensitiveContains(search)
+                || RunsStyle.blurb($0).localizedCaseInsensitiveContains(search)
+        }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    ForEach(0..<4, id: \.self) { optionRow($0) }
-                }
-                Section("More") {
-                    ForEach(4..<options.count, id: \.self) { optionRow($0) }
+                ForEach(categories, id: \.self) { category in
+                    Button { choose(category) } label: {
+                        HStack(spacing: 12) {
+                            ActionGlyph(category: category, size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(RunsStyle.title(category)).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                                Text(RunsStyle.blurb(category)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(LocusTheme.accentText)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
                 }
             }
-            .navigationTitle("Add Step")
+            .searchable(text: $search, prompt: "Search Actions")
+            .navigationTitle("Add Action")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
+            .sheet(item: $placeAction, onDismiss: {
+                if let selectedKind { finish(selectedKind) }
+            }) { action in
+                LocationPickerView(initial: nil) { place in
+                    selectedKind = action == .drive ? .driveTo(place, speed: nil) : .setLocation(place)
+                }
+            }
         }
     }
 
-    private func optionRow(_ i: Int) -> some View {
-        let category = options[i].0
-        let kind = options[i].1
-        return Button {
-            onPick(kind)
-            dismiss()
-        } label: {
-            HStack(spacing: 12) {
-                ActionGlyph(category: category, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(RunsStyle.title(category))
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(RunsStyle.blurb(category))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "plus.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(RunsStyle.color(category))
-            }
-            .contentShape(Rectangle())
+    private func choose(_ category: RunActionKind.Category) {
+        switch category {
+        case .setLocation: placeAction = .teleport
+        case .driveTo: placeAction = .drive
+        case .wait: finish(.wait(seconds: 15 * 60))
+        case .startAt: finish(.startAt(nextHalfHour(), dayOffset: 0))
+        case .setSpeed: finish(.setSpeed(.followLimit))
+        case .stopSpoofing: finish(.stopSpoofing)
+        case .repeatPrevious: finish(.repeatPrevious(count: 1, times: 1))
         }
+    }
+
+    private func finish(_ kind: RunActionKind) {
+        onPick(kind)
+        dismiss()
     }
 
     private func nextHalfHour() -> TimeOfDay {

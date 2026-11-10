@@ -1,5 +1,6 @@
 import MapKit
 import SwiftUI
+import UIKit
 
 /// The main screen, laid out like Apple Maps: a full map, a few floating
 /// controls, and one glass panel at the bottom that holds search, the
@@ -16,7 +17,8 @@ struct MapHomeView: View {
     @FocusState private var searchFocused: Bool
     @State private var selected: MapPlace?
     @State private var isDraggingPin = false
-    @State private var suppressNextMapTap = false
+    @State private var mapCenter: CLLocationCoordinate2D?
+    @State private var suppressPinDrop = false
     @State private var resolvingSearch = false
     @State private var searchTask: Task<Void, Never>?
     @State private var panelExpanded = true
@@ -128,6 +130,7 @@ struct MapHomeView: View {
                     drivePlace = nil
                     selected = nil
                 }
+                .presentationDragIndicator(.hidden)
             }
             .fullScreenCover(isPresented: $showActiveRun) {
                 ActiveRunView()
@@ -154,13 +157,21 @@ struct MapHomeView: View {
             map
 
             VStack(spacing: 8) {
-                MapSearchBar(searchText: $searchText, searchFocused: $searchFocused,
-                             resolvingSearch: resolvingSearch, onSubmitSearch: submitSearch,
-                             onOpenSettings: { showSettings = true })
-                if !isSearching { topChrome }
+                if !isSearching {
+                    HStack {
+                        StatusPill(onFixSetup: { showSettings = true })
+                        Spacer()
+                    }
+                    .padding(.top, 4)
+                }
                 Spacer(minLength: 0)
-                if session.joystickActive && !isSearching {
-                    joystickControls
+                if !isSearching {
+                    HStack {
+                        Spacer()
+                        mapControls
+                    }
+                    .padding(.trailing, 4)
+                    if session.joystickActive { joystickControls }
                 }
                 HomePanel(
                     searchText: $searchText,
@@ -170,6 +181,8 @@ struct MapHomeView: View {
                     expanded: $panelExpanded,
                     walkingTo: walkingTo,
                     here: here,
+                    resolvingSearch: resolvingSearch,
+                    onOpenSettings: { showSettings = true },
                     onPickCompletion: select(completion:),
                     onSubmitSearch: submitSearch,
                     onPickPlace: show(_:),
@@ -219,18 +232,18 @@ struct MapHomeView: View {
                             isDragging: isDraggingPin,
                             onSelect: {
                                 searchFocused = false
-                                suppressTap()
+                                suppressDrop()
                                 if selected == nil { show(.droppedPin(at: pin)) }
                                 lookUpAddressIfNeeded()
                             },
                             onRemove: {
-                                suppressTap()
+                                suppressDrop()
                                 session.pin = nil
                                 selected = nil
                             },
                             onDragBegan: {
                                 searchFocused = false
-                                suppressNextMapTap = true
+                                suppressPinDrop = true
                                 isDraggingPin = true
                             },
                             onDragMoved: { globalPoint in
@@ -242,7 +255,7 @@ struct MapHomeView: View {
                                 isDraggingPin = false
                                 if let pin = session.pin { show(.droppedPin(at: pin)) }
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    suppressNextMapTap = false
+                                    suppressPinDrop = false
                                 }
                             }
                         )
@@ -267,17 +280,16 @@ struct MapHomeView: View {
             .mapControlVisibility(.hidden)
             // Keep the map's centre and Apple's legal notice above the panel.
             .safeAreaPadding(.bottom, isSearching ? 0 : panelHeight)
-            // Global coordinates stay correct with a full-bleed map.
-            .onTapGesture(coordinateSpace: .global) { point in
-                guard !suppressNextMapTap, !isDraggingPin else { return }
-                if searchFocused {
-                    searchFocused = false
-                    return
-                }
-                guard let coord = proxy.convert(point, from: .global) else { return }
-                session.pin = coord
-                show(.droppedPin(at: coord))
-                lookUpAddressIfNeeded()
+            .onMapCameraChange(frequency: .onEnd) { mapCenter = $0.camera.centerCoordinate }
+            .gesture(MapHoldGesture { point in
+                guard !isSearching, !suppressPinDrop, !isDraggingPin else { return }
+                if let pin = session.pin, showsPin(pin),
+                   let tip = proxy.convert(pin, to: .global),
+                   abs(tip.x - point.x) < 26, ((tip.y - 48)...(tip.y + 5)).contains(point.y) { return }
+                if let coordinate = proxy.convert(point, from: .global) { dropPin(at: coordinate) }
+            })
+            .accessibilityAction(named: "Drop pin at map center") {
+                if let coordinate = mapCenter ?? here { dropPin(at: coordinate) }
             }
         }
         .ignoresSafeArea()
@@ -289,30 +301,16 @@ struct MapHomeView: View {
         return abs(sim.latitude - pin.latitude) > 0.00003 || abs(sim.longitude - pin.longitude) > 0.00003
     }
 
-    private func suppressTap() {
-        suppressNextMapTap = true
+    private func suppressDrop() {
+        suppressPinDrop = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            suppressNextMapTap = false
+            suppressPinDrop = false
         }
     }
 
     // MARK: Floating chrome
 
-    private var topChrome: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                StatusPill(onFixSetup: { showSettings = true })
-                Spacer(minLength: 0)
-                if !isSearching {
-                    mapControls
-                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .topTrailing)))
-                }
-            }
-        }
-        .safeAreaPadding(.top, 4)
-    }
-
-    /// Vertical glass stack at the top right, like Apple Maps.
+    /// Floating map controls above the bottom panel.
     private var mapControls: some View {
         VStack(spacing: 10) {
             VStack(spacing: 0) {
@@ -396,6 +394,15 @@ struct MapHomeView: View {
 
     // MARK: Actions
 
+    private func dropPin(at coordinate: CLLocationCoordinate2D) {
+        guard CLLocationCoordinate2DIsValid(coordinate) else { return }
+        panelExpanded = true
+        session.pin = coordinate
+        selected = .droppedPin(at: coordinate)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        lookUpAddressIfNeeded()
+    }
+
     private func show(_ place: MapPlace) {
         searchTask?.cancel()
         resolvingSearch = false
@@ -403,7 +410,7 @@ struct MapHomeView: View {
         searchText = ""
         selected = place
         session.pin = place.coordinate
-        withAnimation(.easeInOut(duration: 0.45)) {
+        withAnimation(.smooth(duration: 0.45)) {
             position = .region(MKCoordinateRegion(center: place.coordinate, latitudinalMeters: 1400, longitudinalMeters: 1400))
         }
     }
@@ -475,8 +482,7 @@ struct MapHomeView: View {
     private func schedule(_ place: MapPlace, drive: Bool) {
         var actions = [RunAction(.setLocation(place.placeRef))]
         if drive {
-            actions = tripOrigin.map { [RunAction(.setLocation($0))] } ?? []
-            actions += (pendingStops + [place.placeRef]).map { RunAction(.driveTo($0, speed: nil)) }
+            actions = (pendingStops + [place.placeRef]).map { RunAction(.driveTo($0, speed: nil)) }
         }
         scheduledDraft = ScheduledRun(name: "\(drive ? "Drive" : "Teleport") to \(place.name)", actions: actions,
                                       schedule: .once(.now.addingTimeInterval(3600)),
@@ -518,7 +524,7 @@ struct MapHomeView: View {
     /// Centers on the simulated spot while spoofing, otherwise real GPS.
     private func goToCurrentLocation() {
         searchFocused = false
-        withAnimation(.easeInOut(duration: 0.4)) {
+        withAnimation(.smooth(duration: 0.4)) {
             if let c = here {
                 position = .region(MKCoordinateRegion(center: c, latitudinalMeters: 900, longitudinalMeters: 900))
             } else {
@@ -543,5 +549,23 @@ struct MapHomeView: View {
         let route = importedRoute
         importedRoute = []
         session.followRoute(route, mode: mode, destinationName: "the end of the route", pairing: pairing)
+    }
+}
+
+/// UIKit supplies the touch coordinate even when the finger never moves.
+private struct MapHoldGesture: UIGestureRecognizerRepresentable {
+    var onHold: (CGPoint) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
+        let recognizer = UILongPressGestureRecognizer()
+        recognizer.minimumPressDuration = 0.5
+        recognizer.allowableMovement = 10
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) {
+        guard recognizer.state == .began else { return }
+        onHold(context.converter.location(in: .global))
     }
 }
